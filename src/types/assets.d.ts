@@ -27,3 +27,8 @@ declare module "*.obj" {
   const source: string;
   export default source;
 }
+
+declare module "*.typeface.json" {
+  const source: Record<string, unknown>;
+  export default source;
+}

@@ -9,23 +9,29 @@ import type {
   BoardVector3
 } from "./types";
 
+const BOARD_TARGET_SIZE = 10.8;
+const CORNER_SOCKET_CENTER_RATIO = 11.685852 / 150;
+const BOARD_TRACK_EDGE = BOARD_TARGET_SIZE * (0.5 - CORNER_SOCKET_CENTER_RATIO);
+const BOARD_TRACK_HALF = BOARD_TRACK_EDGE / 2;
+const homeSpaceIndexBySeat = [8, 4, 0, 12] as const;
+
 const perimeterCoordinates = [
-  { x: -4, z: 4 },
-  { x: -2, z: 4 },
-  { x: 0, z: 4 },
-  { x: 2, z: 4 },
-  { x: 4, z: 4 },
-  { x: 4, z: 2 },
-  { x: 4, z: 0 },
-  { x: 4, z: -2 },
-  { x: 4, z: -4 },
-  { x: 2, z: -4 },
-  { x: 0, z: -4 },
-  { x: -2, z: -4 },
-  { x: -4, z: -4 },
-  { x: -4, z: -2 },
-  { x: -4, z: 0 },
-  { x: -4, z: 2 }
+  { x: -BOARD_TRACK_EDGE, z: BOARD_TRACK_EDGE },
+  { x: -BOARD_TRACK_HALF, z: BOARD_TRACK_EDGE },
+  { x: 0, z: BOARD_TRACK_EDGE },
+  { x: BOARD_TRACK_HALF, z: BOARD_TRACK_EDGE },
+  { x: BOARD_TRACK_EDGE, z: BOARD_TRACK_EDGE },
+  { x: BOARD_TRACK_EDGE, z: BOARD_TRACK_HALF },
+  { x: BOARD_TRACK_EDGE, z: 0 },
+  { x: BOARD_TRACK_EDGE, z: -BOARD_TRACK_HALF },
+  { x: BOARD_TRACK_EDGE, z: -BOARD_TRACK_EDGE },
+  { x: BOARD_TRACK_HALF, z: -BOARD_TRACK_EDGE },
+  { x: 0, z: -BOARD_TRACK_EDGE },
+  { x: -BOARD_TRACK_HALF, z: -BOARD_TRACK_EDGE },
+  { x: -BOARD_TRACK_EDGE, z: -BOARD_TRACK_EDGE },
+  { x: -BOARD_TRACK_EDGE, z: -BOARD_TRACK_HALF },
+  { x: -BOARD_TRACK_EDGE, z: 0 },
+  { x: -BOARD_TRACK_EDGE, z: BOARD_TRACK_HALF }
 ] as const;
 
 const tileBlueprints = [
@@ -242,7 +248,7 @@ export function createBoardPlayers(
     ready: false,
     seatIndex,
     status: player.isLocal ? "Ready when you are" : "Joining table...",
-    tokenSpaceIndex: 0
+    tokenSpaceIndex: homeSpaceIndexBySeat[seatIndex] ?? 0
   }));
 }
 
@@ -302,7 +308,11 @@ export function getTokenWorldPosition(
     y: 0,
     z: 0
   };
-  const offset = tokenOffsets[seatIndex % tokenOffsets.length];
+  const homeSpaceIndex = homeSpaceIndexBySeat[seatIndex % homeSpaceIndexBySeat.length];
+  const offset =
+    tokenSpaceIndex === homeSpaceIndex
+      ? { x: 0, y: 0, z: 0 }
+      : tokenOffsets[seatIndex % tokenOffsets.length];
 
   return {
     x: base.x + offset.x,
@@ -310,3 +320,4 @@ export function getTokenWorldPosition(
     z: base.z + offset.z
   };
 }
+
