@@ -2,11 +2,13 @@ import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import {
   Box3,
+  ExtrudeGeometry,
   Group,
   MathUtils,
   MeshBasicMaterial,
   type Mesh,
   MeshStandardMaterial,
+  Shape,
   Vector3,
   type Object3D
 } from "three";
@@ -38,16 +40,16 @@ const CORNER_SOCKET_CUBE_SIZE_RATIO = 4.25 / 150;
 const CORNER_SOCKET_DEPTH_RATIO = 2.35 / 6;
 const CORNER_SOCKET_GLOW_SCALE = 1.34;
 const CARD_DEAL_START_DELAY_SECONDS = 0.36;
-const CARD_DEAL_WAVE_STEP_SECONDS = 0.026;
-const CARD_DEAL_DURATION_SECONDS = 0.94;
+const CARD_DEAL_WAVE_STEP_SECONDS = 0.03;
+const CARD_DEAL_DURATION_SECONDS = 0.88;
 const CARD_DEAL_SOURCE_HEIGHT = 1.88;
-const CARD_DEAL_SOURCE_SPREAD = 0.48;
-const CARD_DEAL_ARC_MIN = 0.5;
-const CARD_DEAL_ARC_MAX = 0.96;
-const CARD_DEAL_WAVE_MIN = 0.2;
-const CARD_DEAL_WAVE_MAX = 0.52;
-const CARD_DEAL_RIBBON_WIDTH = 6;
-const CARD_DEAL_TRAIL_DISTANCE = 0.26;
+const CARD_DEAL_SOURCE_SPREAD = 0.22;
+const CARD_DEAL_ARC_MIN = 0.64;
+const CARD_DEAL_ARC_MAX = 0.92;
+const CARD_DEAL_WAVE_MIN = 0.08;
+const CARD_DEAL_WAVE_MAX = 0.18;
+const CARD_DEAL_RIBBON_WIDTH = 4;
+const CARD_DEAL_TRAIL_DISTANCE = 0.14;
 const CARD_FACE_DEPTH = 0.024;
 const MYSTERY_BOB_SPEED = 3.2;
 const MYSTERY_SPIN_SPEED = 1.8;
@@ -492,11 +494,9 @@ function assignMysterySymbols(cards: BoardCardSpec[]) {
 
 function assignStandardDeck(cards: BoardCardSpec[]) {
   const shuffledDeck = shuffleArray(createStandardDeck());
-  const standardCardIndices = shuffleArray(
-    cards
-      .map((card, index) => (card.isMystery ? -1 : index))
-      .filter((index) => index >= 0)
-  );
+  const standardCardIndices = cards
+    .map((card, index) => (card.isMystery ? -1 : index))
+    .filter((index) => index >= 0);
   const cardAssignments = new Map<number, { dealIndex: number; face: StandardCardFace }>();
 
   standardCardIndices.forEach((cardIndex, dealIndex) => {
@@ -535,26 +535,27 @@ function assignStandardDeck(cards: BoardCardSpec[]) {
       CARD_DEAL_RIBBON_WIDTH <= 1
         ? 0
         : ribbonColumn / (CARD_DEAL_RIBBON_WIDTH - 1) - 0.5;
+    const waveT =
+      standardCardIndices.length <= 1
+        ? 0
+        : assignment.dealIndex / (standardCardIndices.length - 1);
+    const sweepWave = Math.sin(waveT * Math.PI);
 
     return {
       ...card,
       dealArcHeight:
-        MathUtils.lerp(CARD_DEAL_ARC_MIN, CARD_DEAL_ARC_MAX, Math.random()) +
-        Math.abs(ribbonT) * 0.08,
+        MathUtils.lerp(CARD_DEAL_ARC_MIN, CARD_DEAL_ARC_MAX, sweepWave) +
+        Math.abs(ribbonT) * 0.04,
       dealDelaySeconds: assignment.dealIndex * CARD_DEAL_WAVE_STEP_SECONDS,
       dealIndex: assignment.dealIndex,
       dealSourceOffset: createPoint(
         ribbonT * CARD_DEAL_SOURCE_SPREAD,
-        Math.sin(ribbonRow * 0.62 + ribbonColumn * 0.7) * 0.11,
-        ribbonRow * 0.008
+        -0.16 + ribbonRow * 0.014,
+        ribbonRow * 0.012
       ),
-      dealStartRotation: createPoint(
-        MathUtils.lerp(Math.PI * 0.28, Math.PI * 0.54, Math.random()),
-        MathUtils.lerp(-0.52, 0.52, Math.random()),
-        MathUtils.lerp(-0.8, 0.8, Math.random()) + ribbonT * 0.24
-      ),
-      dealWavePhase: assignment.dealIndex * 0.34 + ribbonColumn * 0.8,
-      dealWaveSpread: MathUtils.lerp(CARD_DEAL_WAVE_MIN, CARD_DEAL_WAVE_MAX, Math.random()),
+      dealStartRotation: createPoint(Math.PI * 0.46, ribbonT * 0.22, ribbonT * 0.16),
+      dealWavePhase: waveT * Math.PI * 1.4 + ribbonColumn * 0.45,
+      dealWaveSpread: MathUtils.lerp(CARD_DEAL_WAVE_MIN, CARD_DEAL_WAVE_MAX, sweepWave),
       face: assignment.face
     } satisfies BoardCardSpec;
   });
@@ -849,6 +850,80 @@ function CardTextMesh({
   );
 }
 
+function createCircleShape(x: number, y: number, radius: number) {
+  const shape = new Shape();
+
+  shape.absarc(x, y, radius, 0, Math.PI * 2, false);
+
+  return shape;
+}
+
+function createRectangleShape(x: number, y: number, width: number, height: number) {
+  const shape = new Shape();
+
+  shape.moveTo(x, y);
+  shape.lineTo(x + width, y);
+  shape.lineTo(x + width, y + height);
+  shape.lineTo(x, y + height);
+  shape.closePath();
+
+  return shape;
+}
+
+function createHeartShape(size: number) {
+  const shape = new Shape();
+
+  shape.moveTo(0, -size * 0.46);
+  shape.bezierCurveTo(-size * 0.28, -size * 0.18, -size * 0.5, size * 0.06, 0, size * 0.46);
+  shape.bezierCurveTo(size * 0.5, size * 0.06, size * 0.28, -size * 0.18, 0, -size * 0.46);
+  shape.closePath();
+
+  return shape;
+}
+
+function createSpadeHeadShape(size: number) {
+  const shape = new Shape();
+
+  shape.moveTo(0, size * 0.48);
+  shape.bezierCurveTo(-size * 0.3, size * 0.2, -size * 0.5, 0, 0, -size * 0.36);
+  shape.bezierCurveTo(size * 0.5, 0, size * 0.3, size * 0.2, 0, size * 0.48);
+  shape.closePath();
+
+  return shape;
+}
+
+function createSuitPipShapes(suit: BoardSuit, size: number) {
+  switch (suit) {
+    case "clubs":
+      return [
+        createCircleShape(0, size * 0.22, size * 0.18),
+        createCircleShape(-size * 0.2, size * 0.02, size * 0.18),
+        createCircleShape(size * 0.2, size * 0.02, size * 0.18),
+        createRectangleShape(-size * 0.06, -size * 0.28, size * 0.12, size * 0.28),
+        createRectangleShape(-size * 0.16, -size * 0.38, size * 0.32, size * 0.08)
+      ];
+    case "diamonds": {
+      const shape = new Shape();
+
+      shape.moveTo(0, size * 0.48);
+      shape.lineTo(size * 0.32, 0);
+      shape.lineTo(0, -size * 0.48);
+      shape.lineTo(-size * 0.32, 0);
+      shape.closePath();
+
+      return shape;
+    }
+    case "hearts":
+      return createHeartShape(size);
+    case "spades":
+      return [
+        createSpadeHeadShape(size),
+        createRectangleShape(-size * 0.05, -size * 0.44, size * 0.1, size * 0.22),
+        createRectangleShape(-size * 0.15, -size * 0.52, size * 0.3, size * 0.08)
+      ];
+  }
+}
+
 function CardSuitGlyph({
   color,
   position,
@@ -860,94 +935,30 @@ function CardSuitGlyph({
   size: number;
   suit: BoardSuit;
 }) {
-  const depthScale = 0.24;
+  const geometry = useMemo(() => {
+    const nextGeometry = new ExtrudeGeometry(createSuitPipShapes(suit, size), {
+      bevelEnabled: false,
+      curveSegments: 16,
+      depth: size * 0.08
+    });
 
-  if (suit === "diamonds") {
-    return (
-      <group position={position} scale={[1, 1, depthScale]}>
-        <mesh scale={[0.86, 1.14, 0.38]} castShadow receiveShadow>
-          <octahedronGeometry args={[size * 0.42, 0]} />
-          <meshStandardMaterial
-            color={color}
-            emissive={color}
-            emissiveIntensity={0.06}
-            metalness={0.08}
-            roughness={0.3}
-          />
-        </mesh>
-      </group>
-    );
-  }
+    nextGeometry.center();
 
-  if (suit === "hearts") {
-    return (
-      <group position={position} scale={[1, 1, depthScale]}>
-        <mesh position={[-size * 0.16, size * 0.12, 0]} castShadow receiveShadow>
-          <sphereGeometry args={[size * 0.2, 18, 18]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-        <mesh position={[size * 0.16, size * 0.12, 0]} castShadow receiveShadow>
-          <sphereGeometry args={[size * 0.2, 18, 18]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-        <mesh position={[0, -size * 0.08, 0]} rotation={[0, 0, Math.PI]} castShadow receiveShadow>
-          <coneGeometry args={[size * 0.34, size * 0.62, 20]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-      </group>
-    );
-  }
+    return nextGeometry;
+  }, [size, suit]);
 
-  if (suit === "clubs") {
-    return (
-      <group position={position} scale={[1, 1, depthScale]}>
-        <mesh position={[0, size * 0.2, 0]} castShadow receiveShadow>
-          <sphereGeometry args={[size * 0.18, 18, 18]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-        <mesh position={[-size * 0.18, 0, 0]} castShadow receiveShadow>
-          <sphereGeometry args={[size * 0.18, 18, 18]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-        <mesh position={[size * 0.18, 0, 0]} castShadow receiveShadow>
-          <sphereGeometry args={[size * 0.18, 18, 18]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-        <mesh position={[0, -size * 0.19, 0]} castShadow receiveShadow>
-          <boxGeometry args={[size * 0.14, size * 0.34, size * 0.14]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-        <mesh position={[0, -size * 0.38, 0]} castShadow receiveShadow>
-          <boxGeometry args={[size * 0.34, size * 0.08, size * 0.14]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-        </mesh>
-      </group>
-    );
-  }
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   return (
-    <group position={position} scale={[1, 1, depthScale]}>
-      <mesh position={[-size * 0.16, size * 0.08, 0]} castShadow receiveShadow>
-        <sphereGeometry args={[size * 0.2, 18, 18]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-      </mesh>
-      <mesh position={[size * 0.16, size * 0.08, 0]} castShadow receiveShadow>
-        <sphereGeometry args={[size * 0.2, 18, 18]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-      </mesh>
-      <mesh position={[0, size * 0.02, 0]} castShadow receiveShadow>
-        <coneGeometry args={[size * 0.34, size * 0.62, 20]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-      </mesh>
-      <mesh position={[0, -size * 0.28, 0]} castShadow receiveShadow>
-        <boxGeometry args={[size * 0.12, size * 0.28, size * 0.14]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-      </mesh>
-      <mesh position={[0, -size * 0.42, 0]} castShadow receiveShadow>
-        <boxGeometry args={[size * 0.3, size * 0.08, size * 0.14]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.06} />
-      </mesh>
-    </group>
+    <mesh geometry={geometry} position={position} castShadow receiveShadow>
+      <meshStandardMaterial
+        color={color}
+        emissive={color}
+        emissiveIntensity={0.04}
+        metalness={0.12}
+        roughness={0.28}
+      />
+    </mesh>
   );
 }
 
@@ -959,7 +970,7 @@ function StandardCardFacePanel({ card }: { card: BoardCardSpec }) {
   const face = card.face;
   const baseSize = Math.min(card.size[0], card.size[1]);
   const panelZ = card.size[2] / 2 + 0.045;
-  const centerRankSize = face.rank === "10" ? baseSize * 0.42 : baseSize * 0.5;
+  const centerRankSize = face.rank === "10" ? baseSize * 0.29 : baseSize * 0.34;
 
   return (
     <>
@@ -974,14 +985,14 @@ function StandardCardFacePanel({ card }: { card: BoardCardSpec }) {
       <CardTextMesh
         color={face.inkColor}
         depth={CARD_FACE_DEPTH}
-        position={[0, baseSize * 0.16, panelZ + 0.02]}
+        position={[0, baseSize * 0.24, panelZ + 0.02]}
         size={centerRankSize}
         text={face.rank}
       />
       <CardSuitGlyph
         color={face.inkColor}
-        position={[0, -baseSize * 0.22, panelZ + 0.02]}
-        size={baseSize * 0.44}
+        position={[0, -baseSize * 0.12, panelZ + 0.018]}
+        size={baseSize * 0.24}
         suit={face.suit}
       />
     </>
@@ -1034,33 +1045,32 @@ function BoardCard({
       CARD_DEAL_START_DELAY_SECONDS -
       card.dealDelaySeconds;
     const progress = MathUtils.clamp(elapsedSeconds / CARD_DEAL_DURATION_SECONDS, 0, 1);
-    const easedProgress = progress * progress * (3 - 2 * progress);
+    const easedProgress =
+      progress * progress * progress * (progress * (progress * 6 - 15) + 10);
     const lift = Math.sin(easedProgress * Math.PI) * card.dealArcHeight;
-    const wave =
-      Math.sin(easedProgress * Math.PI * 2.2 + card.dealWavePhase) *
+    const ribbonWave =
+      Math.sin(easedProgress * Math.PI + card.dealWavePhase) *
       card.dealWaveSpread *
       Math.sin(easedProgress * Math.PI);
-    const trail = (1 - easedProgress) * CARD_DEAL_TRAIL_DISTANCE;
+    const trail = (1 - easedProgress) * (1 - easedProgress) * CARD_DEAL_TRAIL_DISTANCE;
 
     groupRef.current.position.set(
       MathUtils.lerp(startPosition[0], card.position[0], easedProgress) +
-        normalVector[0] * wave -
+        normalVector[0] * ribbonWave -
         (travelVector[0] / travelLength) * trail,
       MathUtils.lerp(startPosition[1], card.position[1], easedProgress) +
-        normalVector[1] * wave -
+        normalVector[1] * ribbonWave -
         (travelVector[1] / travelLength) * trail,
       MathUtils.lerp(startPosition[2], card.position[2], easedProgress) + lift
     );
     groupRef.current.rotation.set(
-      MathUtils.lerp(startRotation[0], 0, easedProgress),
-      MathUtils.lerp(startRotation[1], 0, easedProgress) +
-        Math.sin(easedProgress * Math.PI + card.dealWavePhase) * 0.08 * (1 - easedProgress),
+      MathUtils.lerp(startRotation[0], 0, easedProgress) -
+        Math.sin(easedProgress * Math.PI) * 0.12,
+      MathUtils.lerp(startRotation[1], 0, easedProgress) + ribbonWave * 0.28,
       MathUtils.lerp(startRotation[2], card.rotationZ, easedProgress) +
-        Math.sin(easedProgress * Math.PI * 1.5 + card.dealWavePhase) *
-          0.12 *
-          (1 - easedProgress)
+        Math.sin(easedProgress * Math.PI + card.dealWavePhase) * 0.08 * (1 - easedProgress)
     );
-    groupRef.current.scale.setScalar(MathUtils.lerp(0.9, 1, easedProgress));
+    groupRef.current.scale.setScalar(MathUtils.lerp(0.96, 1, easedProgress));
   });
 
   return (
@@ -1192,3 +1202,4 @@ export function BoardSurface({
     </group>
   );
 }
+

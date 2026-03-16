@@ -289,8 +289,10 @@ function rollCurrentPlayer(snapshot: BoardMatchSnapshot) {
   }
 
   const previousSpace = currentPlayer.tokenSpaceIndex;
-  const nextSpace = (previousSpace + total) % snapshot.spaces.length;
-  const passedStart = previousSpace + total >= snapshot.spaces.length;
+  const stepOffset = currentPlayer.lastRoll === null ? 1 : 0;
+  const boardSteps = Math.max(total - stepOffset, 0);
+  const nextSpace = (previousSpace + boardSteps) % snapshot.spaces.length;
+  const passedStart = previousSpace + boardSteps >= snapshot.spaces.length;
 
   currentPlayer.lastRoll = dice;
   currentPlayer.tokenSpaceIndex = nextSpace;
@@ -539,3 +541,4 @@ export function createMockBoardSessionController({
     }
   };
 }
+

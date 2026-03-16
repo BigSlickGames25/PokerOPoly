@@ -1,8 +1,9 @@
 import { useFrame } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   Box3,
   Group,
+  MathUtils,
   type Mesh,
   MeshStandardMaterial,
   Vector3
@@ -21,13 +22,20 @@ import spadeObjSource from "../../assets/models/spade.obj";
 import { theme } from "../theme";
 import { getTokenWorldPosition } from "./board/definition";
 import type { BoardSpinState } from "./board-spin";
-import type { BoardMatchSnapshot } from "./board/types";
+import type { BoardMatchSnapshot, BoardSpace } from "./board/types";
 import { BoardSurface } from "./BoardSurface";
 
-const PLAYER_TOKEN_TARGET_FOOTPRINT = 0.42;
-const PLAYER_TOKEN_TARGET_HEIGHT = 0.68;
-const PLAYER_TOKEN_RING_INNER = 0.22;
-const PLAYER_TOKEN_RING_OUTER = 0.32;
+const PLAYER_TOKEN_TARGET_FOOTPRINT = 0.34;
+const PLAYER_TOKEN_TARGET_HEIGHT = 0.58;
+const PLAYER_TOKEN_RING_INNER = 0.17;
+const PLAYER_TOKEN_RING_OUTER = 0.25;
+const ACTIVE_PLAYER_SPIN_SPEED = 1.9;
+const PLAYER_STEP_DURATION_MIN_SECONDS = 0.1;
+const PLAYER_STEP_DURATION_MAX_SECONDS = 0.16;
+const PLAYER_STEP_TARGET_DURATION_SECONDS = 1.15;
+const PLAYER_STEP_HOP_HEIGHT = 0.1;
+const TRACK_RENDER_LAST_ROLL: [number, number] = [1, 1];
+const HOME_SPACE_INDEX_BY_SEAT = [30, 15, 0, 45] as const;
 const SUIT_BY_SEAT: PlayerSuit[] = ["diamonds", "hearts", "clubs", "spades"];
 const PLAYER_TOKEN_COLOR_BY_SUIT: Record<PlayerSuit, string> = {
   clubs: "#34d399",
@@ -38,10 +46,74 @@ const PLAYER_TOKEN_COLOR_BY_SUIT: Record<PlayerSuit, string> = {
 
 type PlayerSuit = "clubs" | "diamonds" | "hearts" | "spades";
 
+type TokenWorldPosition = { x: number; y: number; z: number };
+
 interface SuitTokenModel {
   object: Group;
   offset: [number, number, number];
   scale: number;
+}
+
+interface TokenPathAnimation {
+  path: TokenWorldPosition[];
+  segmentDurationSeconds: number;
+  startedAtSeconds: number;
+}
+
+function normalizeSpaceIndex(spaceIndex: number, spaceCount: number) {
+  if (spaceCount <= 0) {
+    return 0;
+  }
+
+  return ((spaceIndex % spaceCount) + spaceCount) % spaceCount;
+}
+
+function normalizeSeatIndex(seatIndex: number) {
+  return ((seatIndex % HOME_SPACE_INDEX_BY_SEAT.length) + HOME_SPACE_INDEX_BY_SEAT.length) %
+    HOME_SPACE_INDEX_BY_SEAT.length;
+}
+
+function setTokenGroupPosition(group: Group, position: TokenWorldPosition) {
+  group.position.set(position.x, position.z, position.y);
+}
+
+function buildTokenStepPath({
+  fromLastRoll,
+  fromSpaceIndex,
+  seatIndex,
+  spaces,
+  toSpaceIndex
+}: {
+  fromLastRoll: [number, number] | null;
+  fromSpaceIndex: number;
+  seatIndex: number;
+  spaces: BoardSpace[];
+  toSpaceIndex: number;
+}) {
+  if (spaces.length === 0) {
+    return [];
+  }
+
+  const normalizedSeatIndex = normalizeSeatIndex(seatIndex);
+  const normalizedFromIndex = normalizeSpaceIndex(fromSpaceIndex, spaces.length);
+  const normalizedToIndex = normalizeSpaceIndex(toSpaceIndex, spaces.length);
+  const forwardSteps =
+    (normalizedToIndex - normalizedFromIndex + spaces.length) % spaces.length;
+  const includeHomeEntryCard =
+    fromLastRoll === null &&
+    normalizedFromIndex === HOME_SPACE_INDEX_BY_SEAT[normalizedSeatIndex];
+  const stepStartOffset = includeHomeEntryCard ? 0 : 1;
+  const path: TokenWorldPosition[] = [];
+
+  for (let offset = stepStartOffset; offset <= forwardSteps; offset += 1) {
+    const stepIndex = normalizeSpaceIndex(normalizedFromIndex + offset, spaces.length);
+
+    path.push(
+      getTokenWorldPosition(spaces, stepIndex, seatIndex, TRACK_RENDER_LAST_ROLL)
+    );
+  }
+
+  return path;
 }
 
 function buildSuitTokenModel({
@@ -130,6 +202,194 @@ function buildSuitTokenLibrary() {
   } satisfies Record<PlayerSuit, SuitTokenModel | null>;
 }
 
+function PlayerToken({
+  isCurrentTurn,
+  lastRoll,
+  playerSuit,
+  resetKey,
+  seatIndex,
+  spaces,
+  tokenModel,
+  tokenSpaceIndex
+}: {
+  isCurrentTurn: boolean;
+  lastRoll: [number, number] | null;
+  playerSuit: PlayerSuit;
+  resetKey: string;
+  seatIndex: number;
+  spaces: BoardSpace[];
+  tokenModel: SuitTokenModel | null;
+  tokenSpaceIndex: number;
+}) {
+  const tokenGroupRef = useRef<Group>(null);
+  const tokenSpinRef = useRef<Group>(null);
+  const targetPosition = getTokenWorldPosition(spaces, tokenSpaceIndex, seatIndex, lastRoll);
+  const initialPositionRef = useRef<TokenWorldPosition>(targetPosition);
+  const displayedPositionRef = useRef<TokenWorldPosition>(targetPosition);
+  const lastSpaceIndexRef = useRef(tokenSpaceIndex);
+  const lastRollRef = useRef<[number, number] | null>(lastRoll);
+  const animationRef = useRef<TokenPathAnimation | null>(null);
+
+  useEffect(() => {
+    const resetPosition = getTokenWorldPosition(spaces, tokenSpaceIndex, seatIndex, lastRoll);
+
+    initialPositionRef.current = resetPosition;
+    displayedPositionRef.current = resetPosition;
+    lastSpaceIndexRef.current = tokenSpaceIndex;
+    lastRollRef.current = lastRoll;
+    animationRef.current = null;
+
+    if (tokenGroupRef.current) {
+      setTokenGroupPosition(tokenGroupRef.current, resetPosition);
+    }
+  }, [resetKey]);
+
+  useFrame(({ clock }, deltaSeconds) => {
+    if (tokenGroupRef.current) {
+      const targetPositionForFrame = getTokenWorldPosition(
+        spaces,
+        tokenSpaceIndex,
+        seatIndex,
+        lastRoll
+      );
+      const hasTokenMoved = lastSpaceIndexRef.current !== tokenSpaceIndex;
+      const hasTurnStateChanged = lastRollRef.current !== lastRoll;
+
+      if (hasTokenMoved || hasTurnStateChanged) {
+        const stepPath = buildTokenStepPath({
+          fromLastRoll: lastRollRef.current,
+          fromSpaceIndex: lastSpaceIndexRef.current,
+          seatIndex,
+          spaces,
+          toSpaceIndex: tokenSpaceIndex
+        });
+
+        if (stepPath.length > 0) {
+          const segmentDurationSeconds = Math.min(
+            PLAYER_STEP_DURATION_MAX_SECONDS,
+            Math.max(
+              PLAYER_STEP_DURATION_MIN_SECONDS,
+              PLAYER_STEP_TARGET_DURATION_SECONDS / stepPath.length
+            )
+          );
+
+          animationRef.current = {
+            path: [displayedPositionRef.current, ...stepPath],
+            segmentDurationSeconds,
+            startedAtSeconds: clock.elapsedTime
+          };
+        } else {
+          animationRef.current = null;
+          displayedPositionRef.current = targetPositionForFrame;
+        }
+
+        lastSpaceIndexRef.current = tokenSpaceIndex;
+        lastRollRef.current = lastRoll;
+      }
+
+      const animation = animationRef.current;
+
+      if (animation && animation.path.length > 1) {
+        const segmentCount = animation.path.length - 1;
+        const totalDurationSeconds = segmentCount * animation.segmentDurationSeconds;
+        const elapsedSeconds = clock.elapsedTime - animation.startedAtSeconds;
+
+        if (elapsedSeconds >= totalDurationSeconds) {
+          displayedPositionRef.current = animation.path[animation.path.length - 1] ?? targetPositionForFrame;
+          animationRef.current = null;
+        } else {
+          const rawSegmentIndex = Math.floor(elapsedSeconds / animation.segmentDurationSeconds);
+          const segmentIndex = Math.min(rawSegmentIndex, segmentCount - 1);
+          const segmentElapsedSeconds = elapsedSeconds - segmentIndex * animation.segmentDurationSeconds;
+          const segmentT = MathUtils.clamp(
+            segmentElapsedSeconds / animation.segmentDurationSeconds,
+            0,
+            1
+          );
+          const easedSegmentT = segmentT * segmentT * (3 - 2 * segmentT);
+          const currentPoint = animation.path[segmentIndex] ?? targetPositionForFrame;
+          const nextPoint = animation.path[segmentIndex + 1] ?? targetPositionForFrame;
+          const hopLift = Math.sin(segmentT * Math.PI) * PLAYER_STEP_HOP_HEIGHT;
+
+          displayedPositionRef.current = {
+            x: MathUtils.lerp(currentPoint.x, nextPoint.x, easedSegmentT),
+            y: MathUtils.lerp(currentPoint.y, nextPoint.y, easedSegmentT) + hopLift,
+            z: MathUtils.lerp(currentPoint.z, nextPoint.z, easedSegmentT)
+          };
+        }
+      } else {
+        displayedPositionRef.current = {
+          x: MathUtils.damp(displayedPositionRef.current.x, targetPositionForFrame.x, 12, deltaSeconds),
+          y: MathUtils.damp(displayedPositionRef.current.y, targetPositionForFrame.y, 12, deltaSeconds),
+          z: MathUtils.damp(displayedPositionRef.current.z, targetPositionForFrame.z, 12, deltaSeconds)
+        };
+      }
+
+      setTokenGroupPosition(tokenGroupRef.current, displayedPositionRef.current);
+    }
+
+    if (!tokenSpinRef.current) {
+      return;
+    }
+
+    if (isCurrentTurn) {
+      tokenSpinRef.current.rotation.z += deltaSeconds * ACTIVE_PLAYER_SPIN_SPEED;
+      return;
+    }
+
+    tokenSpinRef.current.rotation.z = MathUtils.damp(
+      tokenSpinRef.current.rotation.z,
+      0,
+      10,
+      deltaSeconds
+    );
+  });
+
+  return (
+    <group
+      position={[
+        initialPositionRef.current.x,
+        initialPositionRef.current.z,
+        initialPositionRef.current.y
+      ]}
+      ref={tokenGroupRef}
+    >
+      {isCurrentTurn ? (
+        <mesh position={[0, 0, 0.03]}>
+          <ringGeometry args={[PLAYER_TOKEN_RING_INNER, PLAYER_TOKEN_RING_OUTER, 24]} />
+          <meshBasicMaterial
+            color={PLAYER_TOKEN_COLOR_BY_SUIT[playerSuit]}
+            opacity={0.92}
+            transparent
+          />
+        </mesh>
+      ) : null}
+      <group ref={tokenSpinRef}>
+        {tokenModel ? (
+          <group scale={tokenModel.scale}>
+            <primitive
+              dispose={null}
+              object={tokenModel.object}
+              position={tokenModel.offset}
+            />
+          </group>
+        ) : (
+          <mesh position={[0, 0, 0.18]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+            <cylinderGeometry args={[0.14, 0.17, 0.28, 20]} />
+            <meshStandardMaterial
+              color={PLAYER_TOKEN_COLOR_BY_SUIT[playerSuit]}
+              emissive={PLAYER_TOKEN_COLOR_BY_SUIT[playerSuit]}
+              emissiveIntensity={isCurrentTurn ? 0.2 : 0.08}
+              metalness={0.24}
+              roughness={0.35}
+            />
+          </mesh>
+        )}
+      </group>
+    </group>
+  );
+}
+
 export function BoardSceneContent({
   snapshot,
   spinState
@@ -211,50 +471,24 @@ export function BoardSceneContent({
         </mesh>
 
         {snapshot.players.map((player) => {
-          const worldPosition = getTokenWorldPosition(
-            snapshot.spaces,
-            player.tokenSpaceIndex,
-            player.seatIndex
-          );
-          const isCurrentTurn = snapshot.currentTurnPlayerId === player.id;
           const playerSuit = SUIT_BY_SEAT[player.seatIndex % SUIT_BY_SEAT.length];
-          const tokenModel = tokenLibrary[playerSuit];
 
           return (
-            <group
+            <PlayerToken
+              isCurrentTurn={snapshot.currentTurnPlayerId === player.id}
               key={player.id}
-              position={[worldPosition.x, worldPosition.z, 0]}
-            >
-              {isCurrentTurn ? (
-                <mesh position={[0, 0, 0.04]}>
-                  <ringGeometry args={[PLAYER_TOKEN_RING_INNER, PLAYER_TOKEN_RING_OUTER, 24]} />
-                  <meshBasicMaterial color={theme.colors.surface} />
-                </mesh>
-              ) : null}
-              {tokenModel ? (
-                <group scale={tokenModel.scale}>
-                  <primitive
-                    dispose={null}
-                    object={tokenModel.object}
-                    position={tokenModel.offset}
-                  />
-                </group>
-              ) : (
-                <mesh position={[0, 0, 0.2]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-                  <cylinderGeometry args={[0.18, 0.22, 0.34, 20]} />
-                  <meshStandardMaterial
-                    color={PLAYER_TOKEN_COLOR_BY_SUIT[playerSuit]}
-                    emissive={PLAYER_TOKEN_COLOR_BY_SUIT[playerSuit]}
-                    emissiveIntensity={isCurrentTurn ? 0.2 : 0.08}
-                    metalness={0.24}
-                    roughness={0.35}
-                  />
-                </mesh>
-              )}
-            </group>
+              lastRoll={player.lastRoll}
+              playerSuit={playerSuit}
+              resetKey={snapshot.startedAt}
+              seatIndex={player.seatIndex}
+              spaces={snapshot.spaces}
+              tokenModel={tokenLibrary[playerSuit]}
+              tokenSpaceIndex={player.tokenSpaceIndex}
+            />
           );
         })}
       </group>
     </>
   );
 }
+
