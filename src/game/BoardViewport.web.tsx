@@ -1,11 +1,25 @@
 import { Canvas } from "@react-three/fiber";
-import { useEffect, useRef } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import {
+  Animated,
+  Easing,
+  StyleSheet,
+  Text,
+  View
+} from "react-native";
 
 import { theme } from "../theme";
+import type { BoardMatchSnapshot } from "./board/types";
+import type { BoardCameraPresentation } from "./BoardSceneContent";
 import { BoardSceneContent } from "./BoardSceneContent";
 import { useBoardSpinController } from "./board-spin";
-import type { BoardMatchSnapshot } from "./board/types";
+
+interface BoardViewportProps {
+  focusedSpaceIndex?: number | null;
+  onPurchaseRevealReady?: (purchaseRevealKey: string) => void;
+  pendingPurchaseRevealKey?: string | null;
+  snapshot: BoardMatchSnapshot;
+}
 
 function getLocalPoint(
   surface: HTMLDivElement | null,
@@ -28,11 +42,10 @@ function getLocalPoint(
 
 export function BoardViewport({
   focusedSpaceIndex,
+  onPurchaseRevealReady,
+  pendingPurchaseRevealKey,
   snapshot
-}: {
-  focusedSpaceIndex?: number | null;
-  snapshot: BoardMatchSnapshot;
-}) {
+}: BoardViewportProps) {
   const {
     beginInteraction,
     endInteraction,
@@ -41,13 +54,17 @@ export function BoardViewport({
     onLayout,
     spinState
   } = useBoardSpinController();
+  const [cameraPresentation, setCameraPresentation] = useState<BoardCameraPresentation>("board");
+  const fadeValue = useRef(new Animated.Value(0)).current;
   const dragSurfaceRef = useRef<HTMLDivElement | null>(null);
   const mouseActiveRef = useRef(false);
   const touchIdRef = useRef<number | null>(null);
+  const isInteractionBlocked = cameraPresentation !== "board";
   const dragSurfaceStyle: React.CSSProperties = {
     bottom: 0,
-    cursor: mouseActiveRef.current ? "grabbing" : "grab",
+    cursor: isInteractionBlocked ? "default" : mouseActiveRef.current ? "grabbing" : "grab",
     left: 0,
+    pointerEvents: isInteractionBlocked ? "none" : "auto",
     position: "absolute",
     right: 0,
     top: 0,
@@ -55,8 +72,20 @@ export function BoardViewport({
   };
 
   useEffect(() => {
+    const targetOpacity =
+      cameraPresentation === "cut-in" || cameraPresentation === "cut-out" ? 1 : 0;
+
+    Animated.timing(fadeValue, {
+      duration: 220,
+      easing: Easing.inOut(Easing.quad),
+      toValue: targetOpacity,
+      useNativeDriver: true
+    }).start();
+  }, [cameraPresentation, fadeValue]);
+
+  useEffect(() => {
     function handleMouseMove(event: MouseEvent) {
-      if (!mouseActiveRef.current) {
+      if (!mouseActiveRef.current || isInteractionBlocked) {
         return;
       }
 
@@ -84,7 +113,7 @@ export function BoardViewport({
     }
 
     function handleTouchMove(event: TouchEvent) {
-      if (touchIdRef.current === null) {
+      if (touchIdRef.current === null || isInteractionBlocked) {
         return;
       }
 
@@ -140,7 +169,16 @@ export function BoardViewport({
       window.removeEventListener("touchend", handleTouchEnd);
       window.removeEventListener("touchcancel", handleTouchEnd);
     };
-  }, [endInteraction, moveInteraction]);
+  }, [endInteraction, isInteractionBlocked, moveInteraction]);
+
+  const hintLabel =
+    cameraPresentation === "follow"
+      ? "Tracking active token..."
+      : cameraPresentation === "cut-in" || cameraPresentation === "cut-out"
+        ? "Switching camera..."
+        : isDragging
+          ? "Spinning board..."
+          : "Drag to spin the board on Z";
 
   return (
     <View
@@ -158,10 +196,21 @@ export function BoardViewport({
           camera.lookAt(0, 0, 0.4);
         }}
       >
-        <BoardSceneContent focusedSpaceIndex={focusedSpaceIndex} snapshot={snapshot} spinState={spinState} />
+        <BoardSceneContent
+          focusedSpaceIndex={focusedSpaceIndex}
+          onCameraPresentationChange={setCameraPresentation}
+          onPurchaseRevealReady={onPurchaseRevealReady}
+          pendingPurchaseRevealKey={pendingPurchaseRevealKey}
+          snapshot={snapshot}
+          spinState={spinState}
+        />
       </Canvas>
       <div
         onMouseDown={(event) => {
+          if (isInteractionBlocked) {
+            return;
+          }
+
           const point = getLocalPoint(
             dragSurfaceRef.current,
             event.clientX,
@@ -177,6 +226,10 @@ export function BoardViewport({
           beginInteraction(point.x, point.y, point);
         }}
         onTouchStart={(event) => {
+          if (isInteractionBlocked) {
+            return;
+          }
+
           const touch = event.touches[0];
 
           if (!touch) {
@@ -199,10 +252,9 @@ export function BoardViewport({
         ref={dragSurfaceRef}
         style={dragSurfaceStyle}
       />
+      <Animated.View pointerEvents="none" style={[styles.cameraFade, { opacity: fadeValue }]} />
       <View pointerEvents="none" style={styles.hintCard}>
-        <Text style={styles.hintText}>
-          {isDragging ? "Spinning board..." : "Drag to spin the board on Z"}
-        </Text>
+        <Text style={styles.hintText}>{hintLabel}</Text>
       </View>
     </View>
   );
@@ -213,6 +265,15 @@ const styles = StyleSheet.create({
     flex: 1,
     position: "relative"
   },
+  cameraFade: {
+    backgroundColor: "#020617",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 2
+  },
   hintCard: {
     backgroundColor: "rgba(7, 17, 31, 0.78)",
     borderColor: theme.colors.border,
@@ -222,7 +283,8 @@ const styles = StyleSheet.create({
     left: theme.spacing.md,
     paddingHorizontal: theme.spacing.md,
     paddingVertical: 8,
-    position: "absolute"
+    position: "absolute",
+    zIndex: 3
   },
   hintText: {
     color: theme.colors.text,

@@ -1,4 +1,4 @@
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import {
   Box3,
@@ -40,6 +40,17 @@ const DICE_SIZE = 0.42;
 const DICE_HALF_SIZE = DICE_SIZE / 2 + 0.002;
 const DICE_PIP_RADIUS = DICE_SIZE * 0.064;
 const DICE_ROLL_DURATION_SECONDS = 1.05;
+const BOARD_CAMERA_POSITION: readonly [number, number, number] = [8.5, -10, 7.2];
+const BOARD_CAMERA_LOOK_AT: readonly [number, number, number] = [0, 0, 0.4];
+const CAMERA_CUT_DURATION_SECONDS = 0.22;
+const CAMERA_FOLLOW_BLEND_DAMP = 7.5;
+const CAMERA_FOLLOW_DISTANCE = 2.1;
+const CAMERA_FOLLOW_HEIGHT = 1.86;
+const CAMERA_FOLLOW_TARGET_HEIGHT = 0.62;
+const CAMERA_ORBIT_SPEED = 0.54;
+const CAMERA_DIRECTION_RESPONSE = 7.2;
+const CAMERA_TRAIL_DISTANCE = 0.8;
+const CAMERA_LOOK_AHEAD_DISTANCE = 0.42;
 const SUIT_BY_SEAT: PlayerSuit[] = ["diamonds", "hearts", "clubs", "spades"];
 const PLAYER_TOKEN_COLOR_BY_SUIT: Record<PlayerSuit, string> = {
   clubs: "#34d399",
@@ -47,6 +58,8 @@ const PLAYER_TOKEN_COLOR_BY_SUIT: Record<PlayerSuit, string> = {
   hearts: "#fb7185",
   spades: "#cbd5f5"
 };
+
+export type BoardCameraPresentation = "board" | "cut-in" | "follow" | "cut-out";
 
 type PlayerSuit = "clubs" | "diamonds" | "hearts" | "spades";
 type DieValue = 1 | 2 | 3 | 4 | 5 | 6;
@@ -219,7 +232,8 @@ function AnimatedDie({
 
     const elapsedSeconds = clock.elapsedTime - animationStartRef.current;
     const progress = MathUtils.clamp(elapsedSeconds / DICE_ROLL_DURATION_SECONDS, 0, 1);
-    const easedProgress = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
+    const easedProgress =
+      progress * progress * progress * (progress * (progress * 6 - 15) + 10);
     const ribbonCurve = Math.sin(easedProgress * Math.PI) * curveDirection * 0.32;
     const hop = Math.sin(easedProgress * Math.PI) * 0.82;
     const settleBounce = Math.sin(easedProgress * Math.PI * 3) * 0.06 * (1 - easedProgress);
@@ -266,8 +280,18 @@ function BoardDiceRoll({
 
   return (
     <group>
-      <AnimatedDie endPosition={[-0.52, -0.18, 0.92]} index={0} key={`${rollKey}-0`} value={dice[0] as DieValue} />
-      <AnimatedDie endPosition={[0.48, 0.22, 0.92]} index={1} key={`${rollKey}-1`} value={dice[1] as DieValue} />
+      <AnimatedDie
+        endPosition={[-0.52, -0.18, 0.92]}
+        index={0}
+        key={`${rollKey}-0`}
+        value={dice[0] as DieValue}
+      />
+      <AnimatedDie
+        endPosition={[0.48, 0.22, 0.92]}
+        index={1}
+        key={`${rollKey}-1`}
+        value={dice[1] as DieValue}
+      />
     </group>
   );
 }
@@ -359,6 +383,8 @@ function buildSuitTokenLibrary() {
 function PlayerToken({
   isCurrentTurn,
   lastRoll,
+  onMovementChange,
+  onTokenGroupChange,
   playerSuit,
   resetKey,
   seatIndex,
@@ -368,6 +394,8 @@ function PlayerToken({
 }: {
   isCurrentTurn: boolean;
   lastRoll: [number, number] | null;
+  onMovementChange?: (isMoving: boolean) => void;
+  onTokenGroupChange?: (group: Group | null) => void;
   playerSuit: PlayerSuit;
   resetKey: string;
   seatIndex: number;
@@ -383,6 +411,16 @@ function PlayerToken({
   const lastSpaceIndexRef = useRef(tokenSpaceIndex);
   const lastRollRef = useRef<[number, number] | null>(lastRoll);
   const animationRef = useRef<TokenPathAnimation | null>(null);
+  const lastReportedMovingRef = useRef(false);
+
+  useEffect(() => {
+    onTokenGroupChange?.(tokenGroupRef.current);
+
+    return () => {
+      onTokenGroupChange?.(null);
+      onMovementChange?.(false);
+    };
+  }, [onMovementChange, onTokenGroupChange]);
 
   useEffect(() => {
     const resetPosition = getTokenWorldPosition(spaces, tokenSpaceIndex, seatIndex, lastRoll);
@@ -392,11 +430,14 @@ function PlayerToken({
     lastSpaceIndexRef.current = tokenSpaceIndex;
     lastRollRef.current = lastRoll;
     animationRef.current = null;
+    lastReportedMovingRef.current = false;
+    onMovementChange?.(false);
 
     if (tokenGroupRef.current) {
       setTokenGroupPosition(tokenGroupRef.current, resetPosition);
+      onTokenGroupChange?.(tokenGroupRef.current);
     }
-  }, [resetKey]);
+  }, [lastRoll, onMovementChange, onTokenGroupChange, resetKey, seatIndex, spaces, tokenSpaceIndex]);
 
   useFrame(({ clock }, deltaSeconds) => {
     if (tokenGroupRef.current) {
@@ -496,6 +537,13 @@ function PlayerToken({
         };
       }
 
+      const isMoving = Boolean(animationRef.current);
+
+      if (isMoving !== lastReportedMovingRef.current) {
+        lastReportedMovingRef.current = isMoving;
+        onMovementChange?.(isMoving);
+      }
+
       setTokenGroupPosition(tokenGroupRef.current, displayedPositionRef.current);
     }
 
@@ -557,12 +605,238 @@ function PlayerToken({
   );
 }
 
+function BoardCameraDirector({
+  activePlayerId,
+  onCameraPresentationChange,
+  onPurchaseRevealReady,
+  pendingPurchaseRevealKey,
+  tokenGroupByPlayerRef,
+  tokenMotionByPlayerRef
+}: {
+  activePlayerId: string | null;
+  onCameraPresentationChange?: (presentation: BoardCameraPresentation) => void;
+  onPurchaseRevealReady?: (purchaseRevealKey: string) => void;
+  pendingPurchaseRevealKey?: string | null;
+  tokenGroupByPlayerRef: React.MutableRefObject<Map<string, Group | null>>;
+  tokenMotionByPlayerRef: React.MutableRefObject<Record<string, boolean>>;
+}) {
+  const { camera } = useThree();
+  const phaseRef = useRef<BoardCameraPresentation>("board");
+  const phaseStartedAtRef = useRef(0);
+  const revealedPurchaseKeyRef = useRef<string | null>(null);
+  const cameraPositionRef = useRef(new Vector3(...BOARD_CAMERA_POSITION));
+  const lookAtRef = useRef(new Vector3(...BOARD_CAMERA_LOOK_AT));
+  const desiredCameraPositionRef = useRef(new Vector3(...BOARD_CAMERA_POSITION));
+  const desiredLookAtRef = useRef(new Vector3(...BOARD_CAMERA_LOOK_AT));
+  const followCameraPositionRef = useRef(new Vector3(...BOARD_CAMERA_POSITION));
+  const followLookAtRef = useRef(new Vector3(...BOARD_CAMERA_LOOK_AT));
+  const activeTokenWorldRef = useRef(new Vector3());
+  const activeGroundTargetRef = useRef(new Vector3(0, 0, CAMERA_FOLLOW_TARGET_HEIGHT));
+  const planeDeltaRef = useRef(new Vector3());
+  const movementDirectionRef = useRef(new Vector3(1, 0, 0));
+  const orbitOffsetRef = useRef(new Vector3());
+  const trailOffsetRef = useRef(new Vector3());
+  const leadOffsetRef = useRef(new Vector3());
+  const lastGroundTargetRef = useRef(new Vector3());
+
+  useEffect(() => {
+    if (!activePlayerId) {
+      movementDirectionRef.current.set(1, 0, 0);
+      lastGroundTargetRef.current.set(0, 0, 0);
+    }
+  }, [activePlayerId]);
+
+  function setPhase(nextPhase: BoardCameraPresentation, startedAtSeconds: number) {
+    if (phaseRef.current === nextPhase) {
+      return;
+    }
+
+    phaseRef.current = nextPhase;
+    phaseStartedAtRef.current = startedAtSeconds;
+    onCameraPresentationChange?.(nextPhase);
+  }
+
+  useFrame(({ clock }, deltaSeconds) => {
+    const activeTokenGroup = activePlayerId
+      ? tokenGroupByPlayerRef.current.get(activePlayerId) ?? null
+      : null;
+    const activeTokenIsMoving = activePlayerId
+      ? tokenMotionByPlayerRef.current[activePlayerId] === true
+      : false;
+
+    if (!pendingPurchaseRevealKey) {
+      revealedPurchaseKeyRef.current = null;
+    }
+
+    if (activeTokenIsMoving && phaseRef.current === "board") {
+      setPhase("cut-in", clock.elapsedTime);
+    } else if (activeTokenIsMoving && phaseRef.current === "cut-out") {
+      setPhase("cut-in", clock.elapsedTime);
+    }
+
+    const phaseElapsedSeconds = clock.elapsedTime - phaseStartedAtRef.current;
+
+    if (phaseRef.current === "cut-in" && phaseElapsedSeconds >= CAMERA_CUT_DURATION_SECONDS) {
+      setPhase(activeTokenIsMoving ? "follow" : "cut-out", clock.elapsedTime);
+    } else if (
+      phaseRef.current === "follow" &&
+      (!activeTokenIsMoving || !activeTokenGroup)
+    ) {
+      setPhase("cut-out", clock.elapsedTime);
+    } else if (
+      phaseRef.current === "cut-out" &&
+      phaseElapsedSeconds >= CAMERA_CUT_DURATION_SECONDS
+    ) {
+      setPhase("board", clock.elapsedTime);
+    }
+
+    let cinematicBlend = 0;
+
+    if (phaseRef.current === "cut-in") {
+      cinematicBlend = MathUtils.clamp(
+        (clock.elapsedTime - phaseStartedAtRef.current) / CAMERA_CUT_DURATION_SECONDS,
+        0,
+        1
+      );
+    } else if (phaseRef.current === "follow") {
+      cinematicBlend = 1;
+    } else if (phaseRef.current === "cut-out") {
+      cinematicBlend =
+        1 -
+        MathUtils.clamp(
+          (clock.elapsedTime - phaseStartedAtRef.current) / CAMERA_CUT_DURATION_SECONDS,
+          0,
+          1
+        );
+    }
+
+    if (activeTokenGroup) {
+      activeTokenGroup.getWorldPosition(activeTokenWorldRef.current);
+      activeGroundTargetRef.current.set(
+        activeTokenWorldRef.current.x,
+        activeTokenWorldRef.current.y,
+        CAMERA_FOLLOW_TARGET_HEIGHT
+      );
+
+      planeDeltaRef.current
+        .copy(activeGroundTargetRef.current)
+        .sub(lastGroundTargetRef.current);
+      planeDeltaRef.current.z = 0;
+
+      if (lastGroundTargetRef.current.lengthSq() === 0) {
+        lastGroundTargetRef.current.copy(activeGroundTargetRef.current);
+      } else if (planeDeltaRef.current.lengthSq() > 0.0008) {
+        planeDeltaRef.current.normalize();
+        movementDirectionRef.current.lerp(
+          planeDeltaRef.current,
+          Math.min(deltaSeconds * CAMERA_DIRECTION_RESPONSE, 1)
+        );
+
+        if (movementDirectionRef.current.lengthSq() > 0) {
+          movementDirectionRef.current.normalize();
+        }
+
+        lastGroundTargetRef.current.copy(activeGroundTargetRef.current);
+      }
+
+      orbitOffsetRef.current.set(
+        Math.cos(clock.elapsedTime * CAMERA_ORBIT_SPEED) * CAMERA_FOLLOW_DISTANCE,
+        Math.sin(clock.elapsedTime * CAMERA_ORBIT_SPEED) * CAMERA_FOLLOW_DISTANCE * 0.78,
+        CAMERA_FOLLOW_HEIGHT
+      );
+      trailOffsetRef.current.copy(movementDirectionRef.current).multiplyScalar(-CAMERA_TRAIL_DISTANCE);
+      trailOffsetRef.current.z = 0;
+      leadOffsetRef.current.copy(movementDirectionRef.current).multiplyScalar(CAMERA_LOOK_AHEAD_DISTANCE);
+      leadOffsetRef.current.z = 0;
+
+      followCameraPositionRef.current
+        .copy(activeGroundTargetRef.current)
+        .add(orbitOffsetRef.current)
+        .add(trailOffsetRef.current);
+      followLookAtRef.current
+        .copy(activeGroundTargetRef.current)
+        .add(leadOffsetRef.current);
+    } else {
+      cinematicBlend = 0;
+    }
+
+    desiredCameraPositionRef.current
+      .set(...BOARD_CAMERA_POSITION)
+      .lerp(followCameraPositionRef.current, cinematicBlend);
+    desiredLookAtRef.current
+      .set(...BOARD_CAMERA_LOOK_AT)
+      .lerp(followLookAtRef.current, cinematicBlend);
+
+    cameraPositionRef.current.set(
+      MathUtils.damp(
+        cameraPositionRef.current.x,
+        desiredCameraPositionRef.current.x,
+        CAMERA_FOLLOW_BLEND_DAMP,
+        deltaSeconds
+      ),
+      MathUtils.damp(
+        cameraPositionRef.current.y,
+        desiredCameraPositionRef.current.y,
+        CAMERA_FOLLOW_BLEND_DAMP,
+        deltaSeconds
+      ),
+      MathUtils.damp(
+        cameraPositionRef.current.z,
+        desiredCameraPositionRef.current.z,
+        CAMERA_FOLLOW_BLEND_DAMP,
+        deltaSeconds
+      )
+    );
+    lookAtRef.current.set(
+      MathUtils.damp(
+        lookAtRef.current.x,
+        desiredLookAtRef.current.x,
+        CAMERA_FOLLOW_BLEND_DAMP,
+        deltaSeconds
+      ),
+      MathUtils.damp(
+        lookAtRef.current.y,
+        desiredLookAtRef.current.y,
+        CAMERA_FOLLOW_BLEND_DAMP,
+        deltaSeconds
+      ),
+      MathUtils.damp(
+        lookAtRef.current.z,
+        desiredLookAtRef.current.z,
+        CAMERA_FOLLOW_BLEND_DAMP,
+        deltaSeconds
+      )
+    );
+
+    camera.position.copy(cameraPositionRef.current);
+    camera.lookAt(lookAtRef.current);
+
+    if (
+      phaseRef.current === "board" &&
+      !activeTokenIsMoving &&
+      pendingPurchaseRevealKey &&
+      revealedPurchaseKeyRef.current !== pendingPurchaseRevealKey
+    ) {
+      revealedPurchaseKeyRef.current = pendingPurchaseRevealKey;
+      onPurchaseRevealReady?.(pendingPurchaseRevealKey);
+    }
+  });
+
+  return null;
+}
+
 export function BoardSceneContent({
   focusedSpaceIndex,
+  onCameraPresentationChange,
+  onPurchaseRevealReady,
+  pendingPurchaseRevealKey,
   snapshot,
   spinState
 }: {
   focusedSpaceIndex?: number | null;
+  onCameraPresentationChange?: (presentation: BoardCameraPresentation) => void;
+  onPurchaseRevealReady?: (purchaseRevealKey: string) => void;
+  pendingPurchaseRevealKey?: string | null;
   snapshot: BoardMatchSnapshot;
   spinState?: BoardSpinState;
 }) {
@@ -573,7 +847,11 @@ export function BoardSceneContent({
   const angleRef = spinState?.angleRef ?? fallbackAngleRef;
   const draggingRef = spinState?.draggingRef ?? fallbackDraggingRef;
   const velocityRef = spinState?.velocityRef ?? fallbackVelocityRef;
+  const cameraPresentationRef = useRef<BoardCameraPresentation>("board");
+  const tokenGroupByPlayerRef = useRef(new Map<string, Group | null>());
+  const tokenMotionByPlayerRef = useRef<Record<string, boolean>>({});
   const tokenLibrary = useMemo(() => buildSuitTokenLibrary(), []);
+  const activePlayerId = snapshot.currentTurnPlayerId;
   const activeSeatIndex =
     snapshot.players.find((player) => player.id === snapshot.currentTurnPlayerId)?.seatIndex ??
     null;
@@ -581,8 +859,15 @@ export function BoardSceneContent({
     ? `${snapshot.turnNumber}-${snapshot.currentTurnPlayerId ?? "none"}-${snapshot.dice[0]}-${snapshot.dice[1]}`
     : null;
 
+  function handleCameraPresentationChange(presentation: BoardCameraPresentation) {
+    cameraPresentationRef.current = presentation;
+    onCameraPresentationChange?.(presentation);
+  }
+
   useFrame((_, deltaSeconds) => {
-    if (!draggingRef.current) {
+    if (cameraPresentationRef.current !== "board") {
+      velocityRef.current = 0;
+    } else if (!draggingRef.current) {
       if (Math.abs(velocityRef.current) < 0.001) {
         velocityRef.current = 0;
       } else {
@@ -598,6 +883,14 @@ export function BoardSceneContent({
 
   return (
     <>
+      <BoardCameraDirector
+        activePlayerId={activePlayerId}
+        onCameraPresentationChange={handleCameraPresentationChange}
+        onPurchaseRevealReady={onPurchaseRevealReady}
+        pendingPurchaseRevealKey={pendingPurchaseRevealKey}
+        tokenGroupByPlayerRef={tokenGroupByPlayerRef}
+        tokenMotionByPlayerRef={tokenMotionByPlayerRef}
+      />
       <color attach="background" args={[theme.colors.background]} />
       <fog attach="fog" args={[theme.colors.background, 12, 28]} />
       <ambientLight intensity={1.15} />
@@ -626,7 +919,11 @@ export function BoardSceneContent({
           <meshStandardMaterial color={theme.colors.surface} metalness={0.24} roughness={0.42} />
         </mesh>
 
-        <BoardSurface activeSeatIndex={activeSeatIndex} dealSeed={snapshot.startedAt} focusedSpaceIndex={focusedSpaceIndex} />
+        <BoardSurface
+          activeSeatIndex={activeSeatIndex}
+          dealSeed={snapshot.startedAt}
+          focusedSpaceIndex={focusedSpaceIndex}
+        />
         <BoardDiceRoll dice={snapshot.dice} rollKey={diceRollKey} />
 
         <mesh position={[0, 0, 0.1]} rotation={[Math.PI / 2, 0, 0]} castShadow receiveShadow>
@@ -651,6 +948,17 @@ export function BoardSceneContent({
               isCurrentTurn={snapshot.currentTurnPlayerId === player.id}
               key={player.id}
               lastRoll={player.lastRoll}
+              onMovementChange={(isMoving) => {
+                tokenMotionByPlayerRef.current[player.id] = isMoving;
+              }}
+              onTokenGroupChange={(group) => {
+                if (group) {
+                  tokenGroupByPlayerRef.current.set(player.id, group);
+                  return;
+                }
+
+                tokenGroupByPlayerRef.current.delete(player.id);
+              }}
               playerSuit={playerSuit}
               resetKey={snapshot.startedAt}
               seatIndex={player.seatIndex}
@@ -664,4 +972,3 @@ export function BoardSceneContent({
     </>
   );
 }
-

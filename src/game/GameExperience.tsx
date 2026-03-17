@@ -3,7 +3,7 @@ import {
   activateKeepAwakeAsync,
   deactivateKeepAwake
 } from "expo-keep-awake";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Pressable,
   ScrollView,
@@ -55,8 +55,18 @@ export function GameExperience() {
   const connectedCount = snapshot.players.filter((player) => player.connected).length;
   const readyCount = snapshot.players.filter((player) => player.ready).length;
   const localReady = Boolean(localPlayer?.ready);
-  const showPurchaseOverlay = canResolvePurchase && Boolean(pendingPurchaseSpace);
-  const focusedSpaceIndex = snapshot.pendingPurchase?.spaceIndex ?? null;
+  const pendingPurchaseRevealKey = snapshot.pendingPurchase
+    ? `${snapshot.pendingPurchase.playerId}:${snapshot.pendingPurchase.spaceIndex}:${snapshot.turnNumber}`
+    : null;
+  const [purchasePresentationReadyKey, setPurchasePresentationReadyKey] = useState<string | null>(null);
+  const canRevealPurchasePresentation =
+    pendingPurchaseRevealKey !== null &&
+    purchasePresentationReadyKey === pendingPurchaseRevealKey;
+  const showPurchaseOverlay =
+    canResolvePurchase && Boolean(pendingPurchaseSpace) && canRevealPurchasePresentation;
+  const focusedSpaceIndex = canRevealPurchasePresentation
+    ? snapshot.pendingPurchase?.spaceIndex ?? null
+    : null;
   const actionLabel =
     snapshot.phase === "lobby"
       ? localReady
@@ -69,6 +79,12 @@ export function GameExperience() {
           : canEndTurn
             ? "End Turn"
             : "Waiting";
+
+  useEffect(() => {
+    if (!pendingPurchaseRevealKey) {
+      setPurchasePresentationReadyKey(null);
+    }
+  }, [pendingPurchaseRevealKey]);
 
   useEffect(() => {
     if (settings.keepAwake) {
@@ -129,6 +145,12 @@ export function GameExperience() {
     void resetMatch();
   }
 
+  function handlePurchasePresentationReady(purchaseKey: string) {
+    setPurchasePresentationReadyKey((current) =>
+      current === purchaseKey ? current : purchaseKey
+    );
+  }
+
   const metrics = (
     <View style={[styles.metricRow, isWide && styles.metricRowWide]}>
       <MetricCard label="Room" value={snapshot.roomCode} />
@@ -158,7 +180,12 @@ export function GameExperience() {
         </Text>
       </View>
       <View style={[styles.viewportShell, isWide ? styles.viewportWide : styles.viewportTall]}>
-        <BoardViewport focusedSpaceIndex={focusedSpaceIndex} snapshot={snapshot} />
+        <BoardViewport
+          focusedSpaceIndex={focusedSpaceIndex}
+          onPurchaseRevealReady={handlePurchasePresentationReady}
+          pendingPurchaseRevealKey={pendingPurchaseRevealKey}
+          snapshot={snapshot}
+        />
         <PurchaseOverlay
           isVisible={showPurchaseOverlay}
           onBuy={runBuyPendingSpace}
@@ -250,7 +277,9 @@ export function GameExperience() {
             onPress={runPrimaryAction}
             subtitle={
               canResolvePurchase
-                ? "Choose Buy or Pass on the purchase board over the viewport"
+                ? showPurchaseOverlay
+                  ? "Choose Buy or Pass on the purchase board over the viewport"
+                  : "Camera is returning to the board before the purchase prompt opens"
                 : snapshot.phase === "lobby"
                   ? `${readyCount}/4 players ready`
                   : turnPlayer
