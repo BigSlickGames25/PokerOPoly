@@ -403,6 +403,7 @@ export function createBoardSnapshot({
     },
     localPlayerId,
     matchId: `match-${roomCode.toLowerCase()}`,
+    pendingPurchase: null,
     phase: "lobby",
     players: createBoardPlayers(localPlayerId, localDisplayName),
     roomCode,
@@ -446,4 +447,3 @@ export function getTokenWorldPosition(
     z: base.z + offset.z
   };
 }
-

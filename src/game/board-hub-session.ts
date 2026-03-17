@@ -27,12 +27,16 @@ function mergeIncomingSnapshot(
   current: BoardMatchSnapshot,
   incoming: Partial<BoardMatchSnapshot>
 ) {
+  const nextPhase = incoming.phase ?? current.phase;
+
   return {
     ...current,
     ...incoming,
     connectionState: "connected" as const,
     diagnostics: current.diagnostics,
     localPlayerId: current.localPlayerId,
+    pendingPurchase:
+      incoming.pendingPurchase ?? (nextPhase === "purchase" ? current.pendingPurchase : null),
     transportMode: "hub" as const
   };
 }
@@ -168,3 +172,4 @@ export async function createHubBoardSessionController({
     }
   };
 }
+

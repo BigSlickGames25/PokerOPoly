@@ -4,7 +4,13 @@ import { theme } from "../theme";
 import type { BoardMatchSnapshot } from "./board/types";
 import { useBoardSpinController } from "./board-spin";
 
-export function BoardViewport({ snapshot }: { snapshot: BoardMatchSnapshot }) {
+export function BoardViewport({
+  focusedSpaceIndex,
+  snapshot
+}: {
+  focusedSpaceIndex?: number | null;
+  snapshot: BoardMatchSnapshot;
+}) {
   const {
     beginInteraction,
     endInteraction,
@@ -30,6 +36,7 @@ export function BoardViewport({ snapshot }: { snapshot: BoardMatchSnapshot }) {
         <WebBoardViewport
           beginInteraction={beginInteraction}
           endInteraction={endInteraction}
+          focusedSpaceIndex={focusedSpaceIndex}
           moveInteraction={moveInteraction}
           snapshot={snapshot}
           spinState={spinState}
@@ -54,7 +61,11 @@ export function BoardViewport({ snapshot }: { snapshot: BoardMatchSnapshot }) {
       style={styles.root}
       {...panHandlers}
     >
-      <NativeBoardViewport snapshot={snapshot} spinState={spinState} />
+      <NativeBoardViewport
+        focusedSpaceIndex={focusedSpaceIndex}
+        snapshot={snapshot}
+        spinState={spinState}
+      />
       <View pointerEvents="none" style={styles.hintCard}>
         <Text style={styles.hintText}>
           {isDragging ? "Spinning board..." : "Drag to spin the board on Z"}

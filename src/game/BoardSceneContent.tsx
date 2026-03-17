@@ -36,6 +36,10 @@ const PLAYER_STEP_TARGET_DURATION_SECONDS = 1.15;
 const PLAYER_STEP_HOP_HEIGHT = 0.1;
 const TRACK_RENDER_LAST_ROLL: [number, number] = [1, 1];
 const HOME_SPACE_INDEX_BY_SEAT = [30, 15, 0, 45] as const;
+const DICE_SIZE = 0.42;
+const DICE_HALF_SIZE = DICE_SIZE / 2 + 0.002;
+const DICE_PIP_RADIUS = DICE_SIZE * 0.064;
+const DICE_ROLL_DURATION_SECONDS = 1.05;
 const SUIT_BY_SEAT: PlayerSuit[] = ["diamonds", "hearts", "clubs", "spades"];
 const PLAYER_TOKEN_COLOR_BY_SUIT: Record<PlayerSuit, string> = {
   clubs: "#34d399",
@@ -45,7 +49,7 @@ const PLAYER_TOKEN_COLOR_BY_SUIT: Record<PlayerSuit, string> = {
 };
 
 type PlayerSuit = "clubs" | "diamonds" | "hearts" | "spades";
-
+type DieValue = 1 | 2 | 3 | 4 | 5 | 6;
 type TokenWorldPosition = { x: number; y: number; z: number };
 
 interface SuitTokenModel {
@@ -108,12 +112,164 @@ function buildTokenStepPath({
   for (let offset = stepStartOffset; offset <= forwardSteps; offset += 1) {
     const stepIndex = normalizeSpaceIndex(normalizedFromIndex + offset, spaces.length);
 
-    path.push(
-      getTokenWorldPosition(spaces, stepIndex, seatIndex, TRACK_RENDER_LAST_ROLL)
-    );
+    path.push(getTokenWorldPosition(spaces, stepIndex, seatIndex, TRACK_RENDER_LAST_ROLL));
   }
 
   return path;
+}
+
+function getDiePipOffsets(value: DieValue) {
+  const edge = DICE_SIZE * 0.12;
+
+  switch (value) {
+    case 1:
+      return [[0, 0]] as const;
+    case 2:
+      return [[-edge, edge], [edge, -edge]] as const;
+    case 3:
+      return [[-edge, edge], [0, 0], [edge, -edge]] as const;
+    case 4:
+      return [[-edge, edge], [edge, edge], [-edge, -edge], [edge, -edge]] as const;
+    case 5:
+      return [[-edge, edge], [edge, edge], [0, 0], [-edge, -edge], [edge, -edge]] as const;
+    case 6:
+      return [
+        [-edge, edge],
+        [edge, edge],
+        [-edge, 0],
+        [edge, 0],
+        [-edge, -edge],
+        [edge, -edge]
+      ] as const;
+  }
+}
+
+function getDieTopRotation(value: DieValue): [number, number, number] {
+  switch (value) {
+    case 1:
+      return [0, 0, 0];
+    case 2:
+      return [Math.PI / 2, 0, 0];
+    case 3:
+      return [0, -Math.PI / 2, 0];
+    case 4:
+      return [0, Math.PI / 2, 0];
+    case 5:
+      return [-Math.PI / 2, 0, 0];
+    case 6:
+      return [Math.PI, 0, 0];
+  }
+}
+
+function DieFacePips({
+  position,
+  rotation,
+  value
+}: {
+  position: [number, number, number];
+  rotation: [number, number, number];
+  value: DieValue;
+}) {
+  return (
+    <group position={position} rotation={rotation}>
+      {getDiePipOffsets(value).map(([x, y], index) => (
+        <mesh key={`${value}-pip-${index}`} position={[x, y, 0]}>
+          <sphereGeometry args={[DICE_PIP_RADIUS, 14, 14]} />
+          <meshStandardMaterial color="#0f172a" metalness={0.2} roughness={0.28} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function AnimatedDie({
+  endPosition,
+  index,
+  value
+}: {
+  endPosition: [number, number, number];
+  index: number;
+  value: DieValue;
+}) {
+  const dieRef = useRef<Group>(null);
+  const animationStartRef = useRef<number | null>(null);
+  const startPosition = useMemo<[number, number, number]>(
+    () => [-2.1 + index * 0.38, -0.9 + index * 0.55, 2.2 + index * 0.16],
+    [index]
+  );
+  const endRotation = useMemo(() => getDieTopRotation(value), [value]);
+  const startRotation = useMemo<[number, number, number]>(
+    () => [
+      endRotation[0] + Math.PI * (4.3 + index * 0.5),
+      endRotation[1] + Math.PI * (3.8 - index * 0.35),
+      endRotation[2] + Math.PI * (5.1 + index * 0.65)
+    ],
+    [endRotation, index]
+  );
+  const curveDirection = index === 0 ? 1 : -1;
+
+  useFrame(({ clock }) => {
+    if (!dieRef.current) {
+      return;
+    }
+
+    if (animationStartRef.current === null) {
+      animationStartRef.current = clock.elapsedTime;
+    }
+
+    const elapsedSeconds = clock.elapsedTime - animationStartRef.current;
+    const progress = MathUtils.clamp(elapsedSeconds / DICE_ROLL_DURATION_SECONDS, 0, 1);
+    const easedProgress = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
+    const ribbonCurve = Math.sin(easedProgress * Math.PI) * curveDirection * 0.32;
+    const hop = Math.sin(easedProgress * Math.PI) * 0.82;
+    const settleBounce = Math.sin(easedProgress * Math.PI * 3) * 0.06 * (1 - easedProgress);
+
+    dieRef.current.position.set(
+      MathUtils.lerp(startPosition[0], endPosition[0], easedProgress) + ribbonCurve,
+      MathUtils.lerp(startPosition[1], endPosition[1], easedProgress) - ribbonCurve * 0.46,
+      MathUtils.lerp(startPosition[2], endPosition[2], easedProgress) + hop + settleBounce
+    );
+    dieRef.current.rotation.set(
+      MathUtils.lerp(startRotation[0], endRotation[0], easedProgress),
+      MathUtils.lerp(startRotation[1], endRotation[1], easedProgress),
+      MathUtils.lerp(startRotation[2], endRotation[2], easedProgress) + ribbonCurve * 0.35
+    );
+    dieRef.current.scale.setScalar(MathUtils.lerp(0.92, 1, easedProgress));
+  });
+
+  return (
+    <group ref={dieRef} position={startPosition} rotation={startRotation} scale={0.92}>
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[DICE_SIZE, DICE_SIZE, DICE_SIZE]} />
+        <meshStandardMaterial color="#f8fafc" metalness={0.16} roughness={0.2} />
+      </mesh>
+      <DieFacePips position={[0, 0, DICE_HALF_SIZE]} rotation={[0, 0, 0]} value={1} />
+      <DieFacePips position={[0, 0, -DICE_HALF_SIZE]} rotation={[Math.PI, 0, 0]} value={6} />
+      <DieFacePips position={[0, DICE_HALF_SIZE, 0]} rotation={[-Math.PI / 2, 0, 0]} value={2} />
+      <DieFacePips position={[0, -DICE_HALF_SIZE, 0]} rotation={[Math.PI / 2, 0, 0]} value={5} />
+      <DieFacePips position={[DICE_HALF_SIZE, 0, 0]} rotation={[0, Math.PI / 2, 0]} value={3} />
+      <DieFacePips position={[-DICE_HALF_SIZE, 0, 0]} rotation={[0, -Math.PI / 2, 0]} value={4} />
+    </group>
+  );
+}
+
+function BoardDiceRoll({
+  dice,
+  rollKey
+}: {
+  dice: [number, number] | null;
+  rollKey: string | null;
+}) {
+  if (!dice || !rollKey) {
+    return null;
+  }
+
+  return (
+    <group>
+      <AnimatedDie endPosition={[-0.52, -0.18, 0.92]} index={0} key={`${rollKey}-0`} value={dice[0] as DieValue} />
+      <AnimatedDie endPosition={[0.48, 0.22, 0.92]} index={1} key={`${rollKey}-1`} value={dice[1] as DieValue} />
+    </group>
+  );
 }
 
 function buildSuitTokenModel({
@@ -131,9 +287,7 @@ function buildSuitTokenModel({
     const materialCreator = new MTLLoader().parse(mtlSource, "");
     materialCreator.preload();
 
-    const object = new OBJLoader()
-      .setMaterials(materialCreator)
-      .parse(objSource);
+    const object = new OBJLoader().setMaterials(materialCreator).parse(objSource);
     const bounds = new Box3().setFromObject(object);
     const center = bounds.getCenter(new Vector3());
     const size = bounds.getSize(new Vector3());
@@ -295,12 +449,14 @@ function PlayerToken({
         const elapsedSeconds = clock.elapsedTime - animation.startedAtSeconds;
 
         if (elapsedSeconds >= totalDurationSeconds) {
-          displayedPositionRef.current = animation.path[animation.path.length - 1] ?? targetPositionForFrame;
+          displayedPositionRef.current =
+            animation.path[animation.path.length - 1] ?? targetPositionForFrame;
           animationRef.current = null;
         } else {
           const rawSegmentIndex = Math.floor(elapsedSeconds / animation.segmentDurationSeconds);
           const segmentIndex = Math.min(rawSegmentIndex, segmentCount - 1);
-          const segmentElapsedSeconds = elapsedSeconds - segmentIndex * animation.segmentDurationSeconds;
+          const segmentElapsedSeconds =
+            elapsedSeconds - segmentIndex * animation.segmentDurationSeconds;
           const segmentT = MathUtils.clamp(
             segmentElapsedSeconds / animation.segmentDurationSeconds,
             0,
@@ -319,9 +475,24 @@ function PlayerToken({
         }
       } else {
         displayedPositionRef.current = {
-          x: MathUtils.damp(displayedPositionRef.current.x, targetPositionForFrame.x, 12, deltaSeconds),
-          y: MathUtils.damp(displayedPositionRef.current.y, targetPositionForFrame.y, 12, deltaSeconds),
-          z: MathUtils.damp(displayedPositionRef.current.z, targetPositionForFrame.z, 12, deltaSeconds)
+          x: MathUtils.damp(
+            displayedPositionRef.current.x,
+            targetPositionForFrame.x,
+            12,
+            deltaSeconds
+          ),
+          y: MathUtils.damp(
+            displayedPositionRef.current.y,
+            targetPositionForFrame.y,
+            12,
+            deltaSeconds
+          ),
+          z: MathUtils.damp(
+            displayedPositionRef.current.z,
+            targetPositionForFrame.z,
+            12,
+            deltaSeconds
+          )
         };
       }
 
@@ -367,11 +538,7 @@ function PlayerToken({
       <group ref={tokenSpinRef}>
         {tokenModel ? (
           <group scale={tokenModel.scale}>
-            <primitive
-              dispose={null}
-              object={tokenModel.object}
-              position={tokenModel.offset}
-            />
+            <primitive dispose={null} object={tokenModel.object} position={tokenModel.offset} />
           </group>
         ) : (
           <mesh position={[0, 0, 0.18]} rotation={[Math.PI / 2, 0, 0]} castShadow>
@@ -391,9 +558,11 @@ function PlayerToken({
 }
 
 export function BoardSceneContent({
+  focusedSpaceIndex,
   snapshot,
   spinState
 }: {
+  focusedSpaceIndex?: number | null;
   snapshot: BoardMatchSnapshot;
   spinState?: BoardSpinState;
 }) {
@@ -408,6 +577,9 @@ export function BoardSceneContent({
   const activeSeatIndex =
     snapshot.players.find((player) => player.id === snapshot.currentTurnPlayerId)?.seatIndex ??
     null;
+  const diceRollKey = snapshot.dice
+    ? `${snapshot.turnNumber}-${snapshot.currentTurnPlayerId ?? "none"}-${snapshot.dice[0]}-${snapshot.dice[1]}`
+    : null;
 
   useFrame((_, deltaSeconds) => {
     if (!draggingRef.current) {
@@ -454,7 +626,8 @@ export function BoardSceneContent({
           <meshStandardMaterial color={theme.colors.surface} metalness={0.24} roughness={0.42} />
         </mesh>
 
-        <BoardSurface activeSeatIndex={activeSeatIndex} dealSeed={snapshot.startedAt} />
+        <BoardSurface activeSeatIndex={activeSeatIndex} dealSeed={snapshot.startedAt} focusedSpaceIndex={focusedSpaceIndex} />
+        <BoardDiceRoll dice={snapshot.dice} rollKey={diceRollKey} />
 
         <mesh position={[0, 0, 0.1]} rotation={[Math.PI / 2, 0, 0]} castShadow receiveShadow>
           <cylinderGeometry args={[2.2, 2.7, 0.32, 32]} />

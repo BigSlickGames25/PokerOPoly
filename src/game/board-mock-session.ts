@@ -51,8 +51,21 @@ function syncStatuses(snapshot: BoardMatchSnapshot) {
         status = player.ready ? "Ready" : player.isLocal ? "Awaiting ready" : "Loading in";
       } else if (snapshot.phase === "finished") {
         status = "Match complete";
+      } else if (
+        snapshot.phase === "purchase" &&
+        snapshot.pendingPurchase?.playerId === player.id
+      ) {
+        status = player.isLocal ? "Purchase decision" : "Reviewing property";
+      } else if (snapshot.phase === "purchase") {
+        status = "Awaiting purchase";
       } else if (snapshot.currentTurnPlayerId === player.id) {
-        status = player.isLocal ? "Your turn" : "Thinking";
+        status = snapshot.phase === "resolving"
+          ? player.isLocal
+            ? "Resolve turn"
+            : "Wrapping move"
+          : player.isLocal
+            ? "Your turn"
+            : "Thinking";
       } else if (snapshot.phase === "resolving") {
         status = "Resolving move";
       } else {
@@ -128,6 +141,7 @@ function maybeFinish(snapshot: BoardMatchSnapshot) {
       {
         ...snapshot,
         currentTurnPlayerId: null,
+        pendingPurchase: null,
         phase: "finished"
       },
       `${winner?.displayName ?? "A player"} closes the table with the biggest stack.`,
@@ -160,22 +174,22 @@ function applyLandingEffects(snapshot: BoardMatchSnapshot, playerId: string) {
 
   switch (landedSpace.kind) {
     case "property": {
-      if (!landedSpace.ownerId && actingPlayer.bankroll >= landedSpace.price + 180) {
-        actingPlayer.bankroll -= landedSpace.price;
-        nextSpaces[landedSpace.index] = {
-          ...landedSpace,
-          ownerId: actingPlayer.id
-        };
+      if (!landedSpace.ownerId) {
         nextSnapshot = appendLog(
           {
             ...nextSnapshot,
+            pendingPurchase: {
+              playerId: actingPlayer.id,
+              spaceIndex: landedSpace.index
+            },
+            phase: "purchase",
             players: nextPlayers,
             spaces: nextSpaces
           },
-          `${actingPlayer.displayName} buys ${landedSpace.label} for ${landedSpace.price}.`,
-          "positive"
+          `${actingPlayer.displayName} lands on ${landedSpace.label}. Purchase board opens.`,
+          "info"
         );
-      } else if (landedSpace.ownerId && landedSpace.ownerId !== actingPlayer.id) {
+      } else if (landedSpace.ownerId !== actingPlayer.id) {
         const owner = nextPlayers.find((entry) => entry.id === landedSpace.ownerId);
 
         actingPlayer.bankroll -= landedSpace.rent;
@@ -269,6 +283,59 @@ function applyLandingEffects(snapshot: BoardMatchSnapshot, playerId: string) {
   return maybeFinish(syncStatuses(nextSnapshot));
 }
 
+function resolvePendingPurchase(
+  snapshot: BoardMatchSnapshot,
+  decision: "buy" | "pass"
+) {
+  if (snapshot.phase !== "purchase" || !snapshot.pendingPurchase) {
+    return snapshot;
+  }
+
+  const { playerId, spaceIndex } = snapshot.pendingPurchase;
+  const actingPlayer = snapshot.players.find((player) => player.id === playerId);
+  const targetSpace = snapshot.spaces[spaceIndex];
+
+  if (!actingPlayer || !targetSpace) {
+    return syncStatuses({
+      ...snapshot,
+      pendingPurchase: null,
+      phase: "resolving"
+    });
+  }
+
+  const nextSpaces = snapshot.spaces.map((space) => ({ ...space }));
+
+  if (decision === "buy" && !targetSpace.ownerId) {
+    nextSpaces[targetSpace.index] = {
+      ...targetSpace,
+      ownerId: actingPlayer.id
+    };
+  }
+
+  const nextSnapshot = appendLog(
+    {
+      ...snapshot,
+      pendingPurchase: null,
+      phase: "resolving",
+      spaces: nextSpaces
+    },
+    decision === "buy"
+      ? `${actingPlayer.displayName} claims ${targetSpace.label}.`
+      : `${actingPlayer.displayName} passes on ${targetSpace.label}.`,
+    decision === "buy" ? "positive" : "info"
+  );
+
+  return maybeFinish(syncStatuses(nextSnapshot));
+}
+
+function hasLocalPurchaseDecision(snapshot: BoardMatchSnapshot) {
+  return (
+    snapshot.phase === "purchase" &&
+    snapshot.currentTurnPlayerId === snapshot.localPlayerId &&
+    snapshot.pendingPurchase?.playerId === snapshot.localPlayerId
+  );
+}
+
 function rollCurrentPlayer(snapshot: BoardMatchSnapshot) {
   if (snapshot.phase !== "rolling" || !snapshot.currentTurnPlayerId) {
     return snapshot;
@@ -305,10 +372,11 @@ function rollCurrentPlayer(snapshot: BoardMatchSnapshot) {
     {
       ...snapshot,
       dice,
+      pendingPurchase: null,
       phase: "resolving",
       players
     },
-    `${currentPlayer.displayName} rolls ${dice[0]} + ${dice[1]} and advances ${total}.`,
+    `${currentPlayer.displayName} rolls ${dice[0]} + ${dice[1]} and advances ${total} to card ${nextSpace + 1}.`,
     "info"
   );
 
@@ -333,6 +401,7 @@ function advanceTurn(snapshot: BoardMatchSnapshot) {
         ...snapshot,
         currentTurnPlayerId: nextId,
         dice: null,
+        pendingPurchase: null,
         phase: "rolling",
         turnNumber: snapshot.turnNumber + 1
       },
@@ -340,6 +409,28 @@ function advanceTurn(snapshot: BoardMatchSnapshot) {
       "info"
     )
   );
+}
+
+function getRemoteAutomationKey(snapshot: BoardMatchSnapshot) {
+  if (
+    !snapshot.currentTurnPlayerId ||
+    snapshot.currentTurnPlayerId === snapshot.localPlayerId
+  ) {
+    return null;
+  }
+
+  switch (snapshot.phase) {
+    case "rolling":
+      return `rolling:${snapshot.currentTurnPlayerId}:${snapshot.turnNumber}`;
+    case "purchase":
+      return snapshot.pendingPurchase?.playerId === snapshot.currentTurnPlayerId
+        ? `purchase:${snapshot.currentTurnPlayerId}:${snapshot.pendingPurchase.spaceIndex}:${snapshot.turnNumber}`
+        : null;
+    case "resolving":
+      return `resolving:${snapshot.currentTurnPlayerId}:${snapshot.turnNumber}`;
+    default:
+      return null;
+  }
 }
 
 export function createMockBoardSessionController({
@@ -363,7 +454,7 @@ export function createMockBoardSessionController({
   );
   const listeners = new Set<(snapshot: BoardMatchSnapshot) => void>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
-  let scheduledRemoteTurnId: string | null = null;
+  let scheduledRemoteAutomationKey: string | null = null;
 
   function emit() {
     listeners.forEach((listener) => {
@@ -385,7 +476,7 @@ export function createMockBoardSessionController({
       clearTimeout(timer);
     });
     timers.clear();
-    scheduledRemoteTurnId = null;
+    scheduledRemoteAutomationKey = null;
   }
 
   function commit(updater: (current: BoardMatchSnapshot) => BoardMatchSnapshot) {
@@ -435,33 +526,41 @@ export function createMockBoardSessionController({
   }
 
   function ensureRemoteAutomation() {
-    if (
-      snapshot.phase !== "rolling" ||
-      !snapshot.currentTurnPlayerId ||
-      snapshot.currentTurnPlayerId === snapshot.localPlayerId ||
-      snapshot.currentTurnPlayerId === scheduledRemoteTurnId
-    ) {
+    const automationKey = getRemoteAutomationKey(snapshot);
+
+    if (!automationKey || automationKey === scheduledRemoteAutomationKey) {
       return;
     }
 
-    scheduledRemoteTurnId = snapshot.currentTurnPlayerId;
+    scheduledRemoteAutomationKey = automationKey;
+    const activeRemoteId = snapshot.currentTurnPlayerId;
+    const delay = snapshot.phase === "rolling" ? 900 : 1100;
 
     schedule(() => {
-      const activeRemoteId = snapshot.currentTurnPlayerId;
-
-      if (!activeRemoteId || activeRemoteId !== scheduledRemoteTurnId) {
+      if (
+        !activeRemoteId ||
+        snapshot.currentTurnPlayerId !== activeRemoteId ||
+        getRemoteAutomationKey(snapshot) !== automationKey
+      ) {
         return;
       }
 
-      scheduledRemoteTurnId = null;
-      commit((current) => rollCurrentPlayer(current));
+      scheduledRemoteAutomationKey = null;
 
-      if (snapshot.phase === "resolving" && snapshot.currentTurnPlayerId === activeRemoteId) {
-        schedule(() => {
-          commit((current) => advanceTurn(current));
-        }, 1100);
+      if (snapshot.phase === "rolling") {
+        commit((current) => rollCurrentPlayer(current));
+        return;
       }
-    }, 900);
+
+      if (snapshot.phase === "purchase") {
+        commit((current) => resolvePendingPurchase(current, "buy"));
+        return;
+      }
+
+      if (snapshot.phase === "resolving") {
+        commit((current) => advanceTurn(current));
+      }
+    }, delay);
   }
 
   scheduleRemoteLobbyBootstrap();
@@ -494,6 +593,22 @@ export function createMockBoardSessionController({
           }
 
           commit((current) => rollCurrentPlayer(current));
+          break;
+        }
+        case "buy-space": {
+          if (!hasLocalPurchaseDecision(snapshot)) {
+            return;
+          }
+
+          commit((current) => resolvePendingPurchase(current, "buy"));
+          break;
+        }
+        case "pass-space": {
+          if (!hasLocalPurchaseDecision(snapshot)) {
+            return;
+          }
+
+          commit((current) => resolvePendingPurchase(current, "pass"));
           break;
         }
         case "end-turn": {
@@ -541,4 +656,3 @@ export function createMockBoardSessionController({
     }
   };
 }
-

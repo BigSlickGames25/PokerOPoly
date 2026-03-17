@@ -23,6 +23,7 @@ import { fireHaptic } from "../services/haptics";
 import { useGameSettings } from "../store/game-settings";
 import { clamp, theme } from "../theme";
 import { BoardViewport } from "./BoardViewport";
+import { PurchaseOverlay } from "./PurchaseOverlay";
 import { useBoardSession } from "./useBoardSession";
 
 function formatPhaseLabel(phase: string) {
@@ -34,11 +35,15 @@ export function GameExperience() {
   const { currentProduct, status } = useHubSession();
   const { settings } = useGameSettings();
   const {
+    buyPendingSpace,
     canEndTurn,
+    canResolvePurchase,
     canRoll,
     canToggleReady,
     endTurn,
     localPlayer,
+    passPendingSpace,
+    pendingPurchaseSpace,
     resetMatch,
     rollDice,
     snapshot,
@@ -50,16 +55,20 @@ export function GameExperience() {
   const connectedCount = snapshot.players.filter((player) => player.connected).length;
   const readyCount = snapshot.players.filter((player) => player.ready).length;
   const localReady = Boolean(localPlayer?.ready);
+  const showPurchaseOverlay = canResolvePurchase && Boolean(pendingPurchaseSpace);
+  const focusedSpaceIndex = snapshot.pendingPurchase?.spaceIndex ?? null;
   const actionLabel =
     snapshot.phase === "lobby"
       ? localReady
         ? "Stand Down"
         : "Ready Up"
-      : canRoll
-        ? "Roll Dice"
-        : canEndTurn
-          ? "End Turn"
-          : "Waiting";
+      : canResolvePurchase
+        ? "Purchase Board"
+        : canRoll
+          ? "Roll Dice"
+          : canEndTurn
+            ? "End Turn"
+            : "Waiting";
 
   useEffect(() => {
     if (settings.keepAwake) {
@@ -97,6 +106,24 @@ export function GameExperience() {
     }
   }
 
+  function runBuyPendingSpace() {
+    if (!canResolvePurchase) {
+      return;
+    }
+
+    void fireHaptic(settings.haptics, "confirm");
+    void buyPendingSpace();
+  }
+
+  function runPassPendingSpace() {
+    if (!canResolvePurchase) {
+      return;
+    }
+
+    void fireHaptic(settings.haptics, "tap");
+    void passPendingSpace();
+  }
+
   function runReset() {
     void fireHaptic(settings.haptics, "pause");
     void resetMatch();
@@ -131,7 +158,14 @@ export function GameExperience() {
         </Text>
       </View>
       <View style={[styles.viewportShell, isWide ? styles.viewportWide : styles.viewportTall]}>
-        <BoardViewport snapshot={snapshot} />
+        <BoardViewport focusedSpaceIndex={focusedSpaceIndex} snapshot={snapshot} />
+        <PurchaseOverlay
+          isVisible={showPurchaseOverlay}
+          onBuy={runBuyPendingSpace}
+          onPass={runPassPendingSpace}
+          playerName={localPlayer?.displayName ?? turnPlayer?.displayName ?? "Player One"}
+          space={pendingPurchaseSpace}
+        />
       </View>
     </View>
   );
@@ -192,6 +226,9 @@ export function GameExperience() {
                     Seat {player.seatIndex + 1} - {player.status}
                   </Text>
                   <Text style={styles.seatMeta}>
+                    Position {player.lastRoll ? `Card ${player.tokenSpaceIndex + 1}` : `Home -> Card ${player.tokenSpaceIndex + 1}`}
+                  </Text>
+                  <Text style={styles.seatMeta}>
                     Stack {formatChipCount(player.bankroll)}
                     {player.lastRoll ? ` - Last roll ${player.lastRoll[0]} + ${player.lastRoll[1]}` : ""}
                   </Text>
@@ -208,15 +245,17 @@ export function GameExperience() {
       >
         <View style={styles.buttonStack}>
           <GameButton
-            disabled={actionLabel === "Waiting"}
+            disabled={actionLabel === "Waiting" || actionLabel === "Purchase Board"}
             label={actionLabel}
             onPress={runPrimaryAction}
             subtitle={
-              snapshot.phase === "lobby"
-                ? `${readyCount}/4 players ready`
-                : turnPlayer
-                  ? `${turnPlayer.displayName} is the active player`
-                  : "Waiting for turn sync"
+              canResolvePurchase
+                ? "Choose Buy or Pass on the purchase board over the viewport"
+                : snapshot.phase === "lobby"
+                  ? `${readyCount}/4 players ready`
+                  : turnPlayer
+                    ? `${turnPlayer.displayName} is the active player`
+                    : "Waiting for turn sync"
             }
             tone="primary"
           />
@@ -514,7 +553,8 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     borderRadius: theme.radius.xl,
     borderWidth: 1,
-    overflow: "hidden"
+    overflow: "hidden",
+    position: "relative"
   },
   viewportWide: {
     flex: 1,

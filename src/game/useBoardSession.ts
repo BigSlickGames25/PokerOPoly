@@ -109,20 +109,36 @@ export function useBoardSession() {
       snapshot.players.find((player) => player.id === snapshot.currentTurnPlayerId) ?? null,
     [snapshot.currentTurnPlayerId, snapshot.players]
   );
+  const pendingPurchaseSpace = useMemo(() => {
+    if (!snapshot.pendingPurchase) {
+      return null;
+    }
+
+    return snapshot.spaces[snapshot.pendingPurchase.spaceIndex] ?? null;
+  }, [snapshot.pendingPurchase, snapshot.spaces]);
 
   const canToggleReady = snapshot.phase === "lobby";
   const canRoll =
     snapshot.phase === "rolling" && snapshot.currentTurnPlayerId === snapshot.localPlayerId;
+  const canResolvePurchase =
+    snapshot.phase === "purchase" &&
+    snapshot.currentTurnPlayerId === snapshot.localPlayerId &&
+    snapshot.pendingPurchase?.playerId === snapshot.localPlayerId &&
+    Boolean(pendingPurchaseSpace);
   const canEndTurn =
     snapshot.phase === "resolving" &&
     snapshot.currentTurnPlayerId === snapshot.localPlayerId;
 
   return {
+    buyPendingSpace: () => controllerRef.current?.dispatch({ type: "buy-space" }),
     canEndTurn,
     canRoll,
+    canResolvePurchase,
     canToggleReady,
     endTurn: () => controllerRef.current?.dispatch({ type: "end-turn" }),
     localPlayer,
+    passPendingSpace: () => controllerRef.current?.dispatch({ type: "pass-space" }),
+    pendingPurchaseSpace,
     resetMatch: () => controllerRef.current?.dispatch({ type: "reset-match" }),
     rollDice: () => controllerRef.current?.dispatch({ type: "roll-dice" }),
     snapshot,

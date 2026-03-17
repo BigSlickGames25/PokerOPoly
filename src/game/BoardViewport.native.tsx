@@ -6,7 +6,13 @@ import type { BoardMatchSnapshot } from "./board/types";
 import { useBoardSpinController } from "./board-spin";
 import { BoardSceneContent } from "./BoardSceneContent";
 
-export function BoardViewport({ snapshot }: { snapshot: BoardMatchSnapshot }) {
+export function BoardViewport({
+  focusedSpaceIndex,
+  snapshot
+}: {
+  focusedSpaceIndex?: number | null;
+  snapshot: BoardMatchSnapshot;
+}) {
   const { isDragging, onLayout, panHandlers, spinState } = useBoardSpinController();
 
   return (
@@ -26,7 +32,7 @@ export function BoardViewport({ snapshot }: { snapshot: BoardMatchSnapshot }) {
           camera.lookAt(0, 0, 0.4);
         }}
       >
-        <BoardSceneContent snapshot={snapshot} spinState={spinState} />
+        <BoardSceneContent focusedSpaceIndex={focusedSpaceIndex} snapshot={snapshot} spinState={spinState} />
       </Canvas>
       <View pointerEvents="none" style={styles.hintCard}>
         <Text style={styles.hintText}>

@@ -53,6 +53,10 @@ const CARD_DEAL_TRAIL_DISTANCE = 0.14;
 const CARD_FACE_DEPTH = 0.024;
 const MYSTERY_BOB_SPEED = 3.2;
 const MYSTERY_SPIN_SPEED = 1.8;
+const FOCUSED_CARD_BOB_SPEED = 2.4;
+const FOCUSED_CARD_LIFT_HEIGHT = 1.56;
+const FOCUSED_CARD_SCALE = 2.28;
+const FOCUSED_CARD_TILT_X = -Math.PI / 5.4;
 const ACTIVE_SUIT_BY_SEAT: BoardSuit[] = ["diamonds", "hearts", "clubs", "spades"];
 const STANDARD_CARD_RANKS = [
   "A",
@@ -122,6 +126,7 @@ interface BoardCardSpec {
   position: [number, number, number];
   rotationZ: number;
   size: [number, number, number];
+  spaceIndex: number;
 }
 
 interface NormalizedBoardModel {
@@ -440,19 +445,20 @@ function createBoardCards(bounds: Box3, size: Vector3, cornerWidth: number) {
         dealDelaySeconds: 0,
         dealIndex: null,
         dealSourceOffset: createPoint(0, 0, 0),
-        dealStartRotation: createPoint(0, 0, segment.rotationZ),
+        dealStartRotation: createPoint(0, 0, segment.rotationZ + Math.PI),
         dealWavePhase: 0,
         dealWaveSpread: 0,
         face: null,
         isMystery: MYSTERY_CARD_POSITIONS.includes(cardIndex),
         mysteryKind: null,
         position: createPoint(x, y, BOARD_CARD_ELEVATION),
-        rotationZ: segment.rotationZ,
+        rotationZ: segment.rotationZ + Math.PI,
         size: createPoint(
           Math.min(cardLength, (segmentLength / BOARD_CARD_COUNT_PER_EDGE) * 0.82),
           cardWidth,
           BOARD_CARD_THICKNESS
-        )
+        ),
+        spaceIndex: segmentIndex * BOARD_CARD_COUNT_PER_EDGE + cardIndex
       });
     }
   });
@@ -962,6 +968,23 @@ function CardSuitGlyph({
   );
 }
 
+function CardSpaceLabel({ card }: { card: BoardCardSpec }) {
+  const baseSize = Math.min(card.size[0], card.size[1]);
+  const panelZ = card.size[2] / 2 + 0.024;
+  const labelColor = card.face ? card.face.inkColor : "#e2e8f0";
+  const labelText = String(card.spaceIndex + 1).padStart(2, "0");
+
+  return (
+    <CardTextMesh
+      color={labelColor}
+      depth={CARD_FACE_DEPTH * 0.68}
+      position={[0, -baseSize * 0.34, panelZ]}
+      size={baseSize * 0.135}
+      text={labelText}
+    />
+  );
+}
+
 function StandardCardFacePanel({ card }: { card: BoardCardSpec }) {
   if (!card.face) {
     return null;
@@ -1001,13 +1024,16 @@ function StandardCardFacePanel({ card }: { card: BoardCardSpec }) {
 
 function BoardCard({
   card,
+  isFocused,
   mysteryAssets
 }: {
   card: BoardCardSpec;
+  isFocused: boolean;
   mysteryAssets: MysteryAssetSet;
 }) {
   const groupRef = useRef<Group>(null);
   const animationStartRef = useRef<number | null>(null);
+  const focusProgressRef = useRef(0);
   const startPosition =
     card.dealIndex === null
       ? card.position
@@ -1030,47 +1056,78 @@ function BoardCard({
     0
   );
 
-  useFrame(({ clock }) => {
-    if (!groupRef.current || card.dealIndex === null) {
+  useFrame(({ clock }, deltaSeconds) => {
+    if (!groupRef.current) {
       return;
     }
 
-    if (animationStartRef.current === null) {
-      animationStartRef.current = clock.elapsedTime;
+    focusProgressRef.current = MathUtils.damp(
+      focusProgressRef.current,
+      isFocused ? 1 : 0,
+      8,
+      deltaSeconds
+    );
+
+    let basePosition = startPosition;
+    let baseRotation = startRotation;
+    let baseScale = card.dealIndex === null ? 1 : 0.9;
+
+    if (card.dealIndex !== null) {
+      if (animationStartRef.current === null) {
+        animationStartRef.current = clock.elapsedTime;
+      }
+
+      const elapsedSeconds =
+        clock.elapsedTime -
+        animationStartRef.current -
+        CARD_DEAL_START_DELAY_SECONDS -
+        card.dealDelaySeconds;
+      const progress = MathUtils.clamp(elapsedSeconds / CARD_DEAL_DURATION_SECONDS, 0, 1);
+      const easedProgress =
+        progress * progress * progress * (progress * (progress * 6 - 15) + 10);
+      const lift = Math.sin(easedProgress * Math.PI) * card.dealArcHeight;
+      const ribbonWave =
+        Math.sin(easedProgress * Math.PI + card.dealWavePhase) *
+        card.dealWaveSpread *
+        Math.sin(easedProgress * Math.PI);
+      const trail = (1 - easedProgress) * (1 - easedProgress) * CARD_DEAL_TRAIL_DISTANCE;
+
+      basePosition = createPoint(
+        MathUtils.lerp(startPosition[0], card.position[0], easedProgress) +
+          normalVector[0] * ribbonWave -
+          (travelVector[0] / travelLength) * trail,
+        MathUtils.lerp(startPosition[1], card.position[1], easedProgress) +
+          normalVector[1] * ribbonWave -
+          (travelVector[1] / travelLength) * trail,
+        MathUtils.lerp(startPosition[2], card.position[2], easedProgress) + lift
+      );
+      baseRotation = createPoint(
+        MathUtils.lerp(startRotation[0], 0, easedProgress) -
+          Math.sin(easedProgress * Math.PI) * 0.12,
+        MathUtils.lerp(startRotation[1], 0, easedProgress) + ribbonWave * 0.28,
+        MathUtils.lerp(startRotation[2], card.rotationZ, easedProgress) +
+          Math.sin(easedProgress * Math.PI + card.dealWavePhase) * 0.08 * (1 - easedProgress)
+      );
+      baseScale = MathUtils.lerp(0.96, 1, easedProgress);
     }
 
-    const elapsedSeconds =
-      clock.elapsedTime -
-      animationStartRef.current -
-      CARD_DEAL_START_DELAY_SECONDS -
-      card.dealDelaySeconds;
-    const progress = MathUtils.clamp(elapsedSeconds / CARD_DEAL_DURATION_SECONDS, 0, 1);
-    const easedProgress =
-      progress * progress * progress * (progress * (progress * 6 - 15) + 10);
-    const lift = Math.sin(easedProgress * Math.PI) * card.dealArcHeight;
-    const ribbonWave =
-      Math.sin(easedProgress * Math.PI + card.dealWavePhase) *
-      card.dealWaveSpread *
-      Math.sin(easedProgress * Math.PI);
-    const trail = (1 - easedProgress) * (1 - easedProgress) * CARD_DEAL_TRAIL_DISTANCE;
+    const focusProgress = focusProgressRef.current;
+    const focusFloat =
+      Math.sin(clock.elapsedTime * FOCUSED_CARD_BOB_SPEED) * 0.06 * focusProgress;
 
     groupRef.current.position.set(
-      MathUtils.lerp(startPosition[0], card.position[0], easedProgress) +
-        normalVector[0] * ribbonWave -
-        (travelVector[0] / travelLength) * trail,
-      MathUtils.lerp(startPosition[1], card.position[1], easedProgress) +
-        normalVector[1] * ribbonWave -
-        (travelVector[1] / travelLength) * trail,
-      MathUtils.lerp(startPosition[2], card.position[2], easedProgress) + lift
+      MathUtils.lerp(basePosition[0], 0, focusProgress),
+      MathUtils.lerp(basePosition[1], 0, focusProgress),
+      basePosition[2] + MathUtils.lerp(0, FOCUSED_CARD_LIFT_HEIGHT, focusProgress) + focusFloat
     );
     groupRef.current.rotation.set(
-      MathUtils.lerp(startRotation[0], 0, easedProgress) -
-        Math.sin(easedProgress * Math.PI) * 0.12,
-      MathUtils.lerp(startRotation[1], 0, easedProgress) + ribbonWave * 0.28,
-      MathUtils.lerp(startRotation[2], card.rotationZ, easedProgress) +
-        Math.sin(easedProgress * Math.PI + card.dealWavePhase) * 0.08 * (1 - easedProgress)
+      MathUtils.lerp(baseRotation[0], FOCUSED_CARD_TILT_X, focusProgress),
+      MathUtils.lerp(baseRotation[1], 0, focusProgress),
+      MathUtils.lerp(baseRotation[2], 0, focusProgress)
     );
-    groupRef.current.scale.setScalar(MathUtils.lerp(0.96, 1, easedProgress));
+    groupRef.current.scale.setScalar(
+      baseScale * MathUtils.lerp(1, FOCUSED_CARD_SCALE, focusProgress)
+    );
   });
 
   return (
@@ -1080,6 +1137,17 @@ function BoardCard({
       rotation={startRotation}
       scale={card.dealIndex === null ? 1 : 0.9}
     >
+      {isFocused ? (
+        <mesh position={[0, 0, card.size[2] / 2 + 0.035]}>
+          <planeGeometry args={[card.size[0] * 1.16, card.size[1] * 1.16]} />
+          <meshBasicMaterial
+            color={card.face?.accentColor ?? theme.colors.accent}
+            opacity={0.18}
+            toneMapped={false}
+            transparent
+          />
+        </mesh>
+      ) : null}
       <mesh castShadow receiveShadow>
         <boxGeometry args={card.size} />
         <meshStandardMaterial color="#e2e8f0" metalness={0.08} roughness={0.32} />
@@ -1092,6 +1160,7 @@ function BoardCard({
           <meshBasicMaterial color="#0f172a" opacity={0.08} transparent />
         </mesh>
       )}
+      <CardSpaceLabel card={card} />
       {card.isMystery ? <MysteryCardGlyph card={card} mysteryAssets={mysteryAssets} /> : null}
     </group>
   );
@@ -1165,10 +1234,12 @@ function SuitSocketPiece({
 
 export function BoardSurface({
   activeSeatIndex,
-  dealSeed
+  dealSeed,
+  focusedSpaceIndex
 }: {
   activeSeatIndex?: number | null;
   dealSeed?: string;
+  focusedSpaceIndex?: number | null;
 }) {
   const boardModel = useMemo(() => buildBoardModel(), [dealSeed]);
   const activeSuit = getActiveSuit(activeSeatIndex);
@@ -1187,6 +1258,7 @@ export function BoardSurface({
         {boardModel.cards.map((card, index) => (
           <BoardCard
             card={card}
+            isFocused={focusedSpaceIndex === card.spaceIndex}
             key={`board-card-${dealSeed ?? "default"}-${card.face?.cardId ?? "mystery"}-${index}`}
             mysteryAssets={boardModel.mysteryAssets}
           />
@@ -1202,4 +1274,13 @@ export function BoardSurface({
     </group>
   );
 }
+
+
+
+
+
+
+
+
+
 

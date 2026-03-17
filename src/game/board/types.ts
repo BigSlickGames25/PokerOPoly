@@ -1,6 +1,11 @@
 export type BoardTransportMode = "hub" | "hub-fallback" | "mock";
 export type BoardConnectionState = "connecting" | "connected" | "degraded";
-export type BoardMatchPhase = "lobby" | "rolling" | "resolving" | "finished";
+export type BoardMatchPhase =
+  | "lobby"
+  | "rolling"
+  | "purchase"
+  | "resolving"
+  | "finished";
 export type BoardSpaceKind =
   | "bonus"
   | "chance"
@@ -58,6 +63,11 @@ export interface BoardEngineMeta {
   runtime: "expo-native-web";
 }
 
+export interface BoardPendingPurchase {
+  playerId: string;
+  spaceIndex: number;
+}
+
 export interface BoardMatchSnapshot {
   activity: BoardLogEntry[];
   connectionState: BoardConnectionState;
@@ -67,6 +77,7 @@ export interface BoardMatchSnapshot {
   engine: BoardEngineMeta;
   localPlayerId: string;
   matchId: string;
+  pendingPurchase: BoardPendingPurchase | null;
   phase: BoardMatchPhase;
   players: BoardPlayerState[];
   roomCode: string;
@@ -77,7 +88,9 @@ export interface BoardMatchSnapshot {
 }
 
 export type BoardSessionAction =
+  | { type: "buy-space" }
   | { type: "end-turn" }
+  | { type: "pass-space" }
   | { type: "reset-match" }
   | { type: "roll-dice" }
   | { type: "toggle-ready" };

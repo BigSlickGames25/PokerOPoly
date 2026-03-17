@@ -27,8 +27,10 @@ function getLocalPoint(
 }
 
 export function BoardViewport({
+  focusedSpaceIndex,
   snapshot
 }: {
+  focusedSpaceIndex?: number | null;
   snapshot: BoardMatchSnapshot;
 }) {
   const {
@@ -156,7 +158,7 @@ export function BoardViewport({
           camera.lookAt(0, 0, 0.4);
         }}
       >
-        <BoardSceneContent snapshot={snapshot} spinState={spinState} />
+        <BoardSceneContent focusedSpaceIndex={focusedSpaceIndex} snapshot={snapshot} spinState={spinState} />
       </Canvas>
       <div
         onMouseDown={(event) => {
