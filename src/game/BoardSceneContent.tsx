@@ -1,4 +1,5 @@
 import { useFrame, useThree } from "@react-three/fiber";
+import { Html } from '@react-three/drei';
 import { useEffect, useMemo, useRef } from "react";
 import {
   Box3,
@@ -822,7 +823,25 @@ function BoardCameraDirector({
     }
   });
 
-  return null;
+  // Debug overlay for camera phase and following
+  return (
+    <Html position={[0, 0, 8]} center style={{ pointerEvents: 'none', zIndex: 1000 }}>
+      <div style={{
+        background: 'rgba(0,0,0,0.7)',
+        color: '#fff',
+        fontSize: '14px',
+        padding: '6px 12px',
+        borderRadius: '8px',
+        maxWidth: '320px',
+        margin: '0 auto',
+        textAlign: 'center',
+      }}>
+        <div>Camera phase: <b>{phaseRef.current}</b></div>
+        <div>Active player: <b>{activePlayerId || 'none'}</b></div>
+        <div>Token moving: <b>{String(activeTokenIsMoving)}</b></div>
+      </div>
+    </Html>
+  );
 }
 
 export function BoardSceneContent({
@@ -949,14 +968,23 @@ export function BoardSceneContent({
               key={player.id}
               lastRoll={player.lastRoll}
               onMovementChange={(isMoving) => {
+                // Always update for active player
                 tokenMotionByPlayerRef.current[player.id] = isMoving;
+                // Force update for active player to ensure camera logic
+                if (snapshot.currentTurnPlayerId === player.id && isMoving) {
+                  tokenMotionByPlayerRef.current[player.id] = true;
+                }
               }}
               onTokenGroupChange={(group) => {
+                // Always set group for active player
                 if (group) {
                   tokenGroupByPlayerRef.current.set(player.id, group);
+                  // Force update for active player
+                  if (snapshot.currentTurnPlayerId === player.id) {
+                    tokenGroupByPlayerRef.current.set(player.id, group);
+                  }
                   return;
                 }
-
                 tokenGroupByPlayerRef.current.delete(player.id);
               }}
               playerSuit={playerSuit}
