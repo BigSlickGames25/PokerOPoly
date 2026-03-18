@@ -40,62 +40,13 @@ export function PurchaseOverlay({
   playerName: string;
   space: BoardSpace | null;
 }) {
-  const transition = useRef(new Animated.Value(0)).current;
-  const [renderedSpace, setRenderedSpace] = useState<BoardSpace | null>(space);
-
-  useEffect(() => {
-    if (isVisible && space) {
-      setRenderedSpace(space);
-      transition.stopAnimation();
-      transition.setValue(renderedSpace?.id === space.id ? 0.2 : 0);
-      Animated.timing(transition, {
-        duration: 340,
-        easing: Easing.out(Easing.cubic),
-        toValue: 1,
-        useNativeDriver: true
-      }).start();
-      return;
-    }
-
-    transition.stopAnimation();
-    Animated.timing(transition, {
-      duration: 180,
-      easing: Easing.in(Easing.quad),
-      toValue: 0,
-      useNativeDriver: true
-    }).start(({ finished }) => {
-      if (finished) {
-        setRenderedSpace(null);
-      }
-    });
-  }, [isVisible, renderedSpace?.id, space, transition]);
-
-  if (!renderedSpace) {
+  // Remove animation: just show modal if isVisible and space is set
+  if (!isVisible || !space) {
     return null;
   }
 
-  const previewTranslateY = transition.interpolate({
-    inputRange: [0, 1],
-    outputRange: [48, 0]
-  });
-  const previewScale = transition.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.88, 1]
-  });
-  const panelTranslateY = transition.interpolate({
-    inputRange: [0, 1],
-    outputRange: [72, 0]
-  });
-  const panelScale = transition.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.92, 1]
-  });
-
   return (
-    <Animated.View
-      pointerEvents={isVisible ? "auto" : "none"}
-      style={[styles.overlay, { opacity: transition }]}
-    >
+    <View pointerEvents="auto" style={[styles.overlay, { opacity: 1 }]}> 
       <LinearGradient
         colors={["rgba(3, 8, 18, 0.26)", "rgba(3, 8, 18, 0.88)"]}
         end={{ x: 0.82, y: 1 }}

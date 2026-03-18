@@ -1022,135 +1022,49 @@ function StandardCardFacePanel({ card }: { card: BoardCardSpec }) {
   );
 }
 
+// Patch: BoardCard now supports owner color and active ring, and disables card-to-player animation after deal
+import { useMemo } from "react";
+import type { BoardPlayerState } from "./board/types";
+
 function BoardCard({
   card,
   isFocused,
-  mysteryAssets
+  mysteryAssets,
+  players,
+  activePlayerTokenSpaceIndex
 }: {
   card: BoardCardSpec;
   isFocused: boolean;
   mysteryAssets: MysteryAssetSet;
+  players?: BoardPlayerState[];
+  activePlayerTokenSpaceIndex?: number | null;
 }) {
-  const groupRef = useRef<Group>(null);
-  const animationStartRef = useRef<number | null>(null);
-  const focusProgressRef = useRef(0);
-  const startPosition =
-    card.dealIndex === null
-      ? card.position
-      : createPoint(
-          card.dealSourceOffset[0],
-          card.dealSourceOffset[1],
-          CARD_DEAL_SOURCE_HEIGHT + card.dealSourceOffset[2]
-        );
-  const startRotation =
-    card.dealIndex === null ? createPoint(0, 0, card.rotationZ) : card.dealStartRotation;
-  const travelVector = createPoint(
-    card.position[0] - startPosition[0],
-    card.position[1] - startPosition[1],
-    card.position[2] - startPosition[2]
-  );
-  const travelLength = Math.hypot(travelVector[0], travelVector[1]) || 1;
-  const normalVector = createPoint(
-    -travelVector[1] / travelLength,
-    travelVector[0] / travelLength,
-    0
-  );
+  // Find owner color if card is owned
+  const ownerColor = useMemo(() => {
+    if (!players || !card || !card.ownerId) return undefined;
+    const owner = players.find((p) => p.id === card.ownerId);
+    return owner?.colorHex;
+  }, [players, card]);
 
-  useFrame(({ clock }, deltaSeconds) => {
-    if (!groupRef.current) {
-      return;
-    }
+  // Is this card the one the active player is on?
+  const isActivePlayerCard =
+    typeof activePlayerTokenSpaceIndex === "number" &&
+    card.spaceIndex === activePlayerTokenSpaceIndex;
 
-    focusProgressRef.current = MathUtils.damp(
-      focusProgressRef.current,
-      isFocused ? 1 : 0,
-      8,
-      deltaSeconds
-    );
-
-    let basePosition = startPosition;
-    let baseRotation = startRotation;
-    let baseScale = card.dealIndex === null ? 1 : 0.9;
-
-    if (card.dealIndex !== null) {
-      if (animationStartRef.current === null) {
-        animationStartRef.current = clock.elapsedTime;
-      }
-
-      const elapsedSeconds =
-        clock.elapsedTime -
-        animationStartRef.current -
-        CARD_DEAL_START_DELAY_SECONDS -
-        card.dealDelaySeconds;
-      const progress = MathUtils.clamp(elapsedSeconds / CARD_DEAL_DURATION_SECONDS, 0, 1);
-      const easedProgress =
-        progress * progress * progress * (progress * (progress * 6 - 15) + 10);
-      const lift = Math.sin(easedProgress * Math.PI) * card.dealArcHeight;
-      const ribbonWave =
-        Math.sin(easedProgress * Math.PI + card.dealWavePhase) *
-        card.dealWaveSpread *
-        Math.sin(easedProgress * Math.PI);
-      const trail = (1 - easedProgress) * (1 - easedProgress) * CARD_DEAL_TRAIL_DISTANCE;
-
-      basePosition = createPoint(
-        MathUtils.lerp(startPosition[0], card.position[0], easedProgress) +
-          normalVector[0] * ribbonWave -
-          (travelVector[0] / travelLength) * trail,
-        MathUtils.lerp(startPosition[1], card.position[1], easedProgress) +
-          normalVector[1] * ribbonWave -
-          (travelVector[1] / travelLength) * trail,
-        MathUtils.lerp(startPosition[2], card.position[2], easedProgress) + lift
-      );
-      baseRotation = createPoint(
-        MathUtils.lerp(startRotation[0], 0, easedProgress) -
-          Math.sin(easedProgress * Math.PI) * 0.12,
-        MathUtils.lerp(startRotation[1], 0, easedProgress) + ribbonWave * 0.28,
-        MathUtils.lerp(startRotation[2], card.rotationZ, easedProgress) +
-          Math.sin(easedProgress * Math.PI + card.dealWavePhase) * 0.08 * (1 - easedProgress)
-      );
-      baseScale = MathUtils.lerp(0.96, 1, easedProgress);
-    }
-
-    const focusProgress = focusProgressRef.current;
-    const focusFloat =
-      Math.sin(clock.elapsedTime * FOCUSED_CARD_BOB_SPEED) * 0.06 * focusProgress;
-
-    groupRef.current.position.set(
-      MathUtils.lerp(basePosition[0], 0, focusProgress),
-      MathUtils.lerp(basePosition[1], 0, focusProgress),
-      basePosition[2] + MathUtils.lerp(0, FOCUSED_CARD_LIFT_HEIGHT, focusProgress) + focusFloat
-    );
-    groupRef.current.rotation.set(
-      MathUtils.lerp(baseRotation[0], FOCUSED_CARD_TILT_X, focusProgress),
-      MathUtils.lerp(baseRotation[1], 0, focusProgress),
-      MathUtils.lerp(baseRotation[2], 0, focusProgress)
-    );
-    groupRef.current.scale.setScalar(
-      baseScale * MathUtils.lerp(1, FOCUSED_CARD_SCALE, focusProgress)
-    );
-  });
-
+  // Remove card-to-player animation after deal: always render at position
+  // (If you want to keep deal animation, add a prop to control it)
   return (
-    <group
-      ref={groupRef}
-      position={startPosition}
-      rotation={startRotation}
-      scale={card.dealIndex === null ? 1 : 0.9}
-    >
-      {isFocused ? (
-        <mesh position={[0, 0, card.size[2] / 2 + 0.035]}>
-          <planeGeometry args={[card.size[0] * 1.16, card.size[1] * 1.16]} />
-          <meshBasicMaterial
-            color={card.face?.accentColor ?? theme.colors.accent}
-            opacity={0.18}
-            toneMapped={false}
-            transparent
-          />
+    <group position={card.position} rotation={createPoint(0, 0, card.rotationZ)}>
+      {/* Active player ring under card */}
+      {isActivePlayerCard && (
+        <mesh position={[0, 0, -card.size[2] / 2 - 0.01]}>
+          <ringGeometry args={[card.size[0] * 0.48, card.size[0] * 0.6, 32]} />
+          <meshBasicMaterial color={ownerColor || "#fff"} opacity={0.85} transparent />
         </mesh>
-      ) : null}
+      )}
       <mesh castShadow receiveShadow>
         <boxGeometry args={card.size} />
-        <meshStandardMaterial color="#e2e8f0" metalness={0.08} roughness={0.32} />
+        <meshStandardMaterial color={ownerColor || "#e2e8f0"} metalness={0.08} roughness={0.32} />
       </mesh>
       {card.face ? (
         <StandardCardFacePanel card={card} />
@@ -1162,6 +1076,18 @@ function BoardCard({
       )}
       <CardSpaceLabel card={card} />
       {card.isMystery ? <MysteryCardGlyph card={card} mysteryAssets={mysteryAssets} /> : null}
+      {/* Focused highlight */}
+      {isFocused ? (
+        <mesh position={[0, 0, card.size[2] / 2 + 0.035]}>
+          <planeGeometry args={[card.size[0] * 1.16, card.size[1] * 1.16]} />
+          <meshBasicMaterial
+            color={card.face?.accentColor ?? theme.colors.accent}
+            opacity={0.18}
+            toneMapped={false}
+            transparent
+          />
+        </mesh>
+      ) : null}
     </group>
   );
 }
@@ -1232,14 +1158,20 @@ function SuitSocketPiece({
   );
 }
 
+import type { BoardPlayerState } from "./board/types";
+
 export function BoardSurface({
   activeSeatIndex,
   dealSeed,
-  focusedSpaceIndex
+  focusedSpaceIndex,
+  players,
+  activePlayerTokenSpaceIndex
 }: {
   activeSeatIndex?: number | null;
   dealSeed?: string;
   focusedSpaceIndex?: number | null;
+  players?: BoardPlayerState[];
+  activePlayerTokenSpaceIndex?: number | null;
 }) {
   const boardModel = useMemo(() => buildBoardModel(), [dealSeed]);
   const activeSuit = getActiveSuit(activeSeatIndex);
@@ -1261,6 +1193,8 @@ export function BoardSurface({
             isFocused={focusedSpaceIndex === card.spaceIndex}
             key={`board-card-${dealSeed ?? "default"}-${card.face?.cardId ?? "mystery"}-${index}`}
             mysteryAssets={boardModel.mysteryAssets}
+            players={players}
+            activePlayerTokenSpaceIndex={activePlayerTokenSpaceIndex}
           />
         ))}
         {boardModel.suitSockets.map((socket) => (
