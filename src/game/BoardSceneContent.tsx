@@ -26,6 +26,8 @@ import type { BoardSpinState } from "./board-spin";
 import type { BoardMatchSnapshot, BoardSpace } from "./board/types";
 import { BoardSurface } from "./BoardSurface";
 
+import { PlayerConsole3D } from "./PlayerConsole3D";
+
 const PLAYER_TOKEN_TARGET_FOOTPRINT = 0.34;
 const PLAYER_TOKEN_TARGET_HEIGHT = 0.58;
 const PLAYER_TOKEN_RING_INNER = 0.17;
@@ -983,6 +985,59 @@ export function BoardSceneContent({
               tokenSpaceIndex={player.tokenSpaceIndex}
             />
           );
+        })}
+
+        {/* Player Consoles: Render one for each player, positioned/scaled on each inner edge at 35° angle */}
+        {snapshot.players.map((player, i) => {
+          // Board model for console (scaled down)
+          const boardModel = useMemo(() => {
+            const model = buildBoardModel();
+            if (!model) return null;
+            // Clone the object for each console to avoid shared state
+            return {
+              ...model,
+              object: model.object.clone(true)
+            };
+          }, []);
+
+          // Positioning: 4 consoles, one per edge, at 35° tilt, pivot at bottom
+          // Board is centered at (0,0), so offset from center along each edge
+          const edgeDistance = 6.2; // Distance from center to edge (tweak as needed)
+          const tiltAngle = Math.PI / 5.14; // ~35° in radians
+          // Edge positions: top, right, bottom, left
+          const edgePositions = [
+            [0, edgeDistance, 0.6],    // Top
+            [edgeDistance, 0, 0.6],   // Right
+            [0, -edgeDistance, 0.6],  // Bottom
+            [-edgeDistance, 0, 0.6]   // Left
+          ];
+          const edgeRotations = [
+            [-tiltAngle, 0, 0],
+            [-tiltAngle, 0, Math.PI / 2],
+            [-tiltAngle, 0, Math.PI],
+            [-tiltAngle, 0, -Math.PI / 2]
+          ];
+          // Assign edge by seatIndex (wrap if >4 players)
+          const edgeIdx = player.seatIndex % 4;
+
+          // State: for now, all consoles start minimized
+          const state = "minimized";
+
+          return boardModel ? (
+            <group
+              key={`player-console-${player.id}`}
+              position={edgePositions[edgeIdx]}
+              rotation={edgeRotations[edgeIdx]}
+            >
+              <PlayerConsole3D
+                playerId={player.id}
+                seatIndex={player.seatIndex}
+                boardModel={boardModel}
+                state={state}
+                // onStateChange={...} // To be implemented
+              />
+            </group>
+          ) : null;
         })}
       </group>
     </>
