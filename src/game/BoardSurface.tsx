@@ -1023,36 +1023,38 @@ function StandardCardFacePanel({ card }: { card: BoardCardSpec }) {
 }
 
 // Patch: BoardCard now supports owner color and active ring, and disables card-to-player animation after deal
-import { useMemo } from "react";
-import type { BoardPlayerState } from "./board/types";
+
 
 function BoardCard({
   card,
   isFocused,
   mysteryAssets,
   players,
-  activePlayerTokenSpaceIndex
+  activePlayerTokenSpaceIndex,
+  spaces
 }: {
   card: BoardCardSpec;
   isFocused: boolean;
   mysteryAssets: MysteryAssetSet;
-  players?: BoardPlayerState[];
+  players?: any[];
   activePlayerTokenSpaceIndex?: number | null;
+  spaces?: any[];
 }) {
-  // Find owner color if card is owned
-  const ownerColor = useMemo(() => {
-    if (!players || !card || !card.ownerId) return undefined;
-    const owner = players.find((p) => p.id === card.ownerId);
-    return owner?.colorHex;
-  }, [players, card]);
+  // Find owner color if card is owned (from BoardSpace)
+  let ownerColor;
+  if (players && spaces) {
+    const space = spaces.find((s) => s.index === card.spaceIndex);
+    if (space && space.ownerId) {
+      const owner = players.find((p) => p.id === space.ownerId);
+      ownerColor = owner?.colorHex;
+    }
+  }
 
   // Is this card the one the active player is on?
   const isActivePlayerCard =
     typeof activePlayerTokenSpaceIndex === "number" &&
     card.spaceIndex === activePlayerTokenSpaceIndex;
 
-  // Remove card-to-player animation after deal: always render at position
-  // (If you want to keep deal animation, add a prop to control it)
   return (
     <group position={card.position} rotation={createPoint(0, 0, card.rotationZ)}>
       {/* Active player ring under card */}
@@ -1195,6 +1197,7 @@ export function BoardSurface({
             mysteryAssets={boardModel.mysteryAssets}
             players={players}
             activePlayerTokenSpaceIndex={activePlayerTokenSpaceIndex}
+            spaces={players && players.length > 0 ? players[0].spaces : []}
           />
         ))}
         {boardModel.suitSockets.map((socket) => (

@@ -1,5 +1,5 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import { Html } from '@react-three/drei';
+// Removed Html debug overlay
 import { useEffect, useMemo, useRef } from "react";
 import {
   Box3,
@@ -823,25 +823,8 @@ function BoardCameraDirector({
     }
   });
 
-  // Debug overlay for camera phase and following
-  return (
-    <Html position={[0, 0, 8]} center style={{ pointerEvents: 'none', zIndex: 1000 }}>
-      <div style={{
-        background: 'rgba(0,0,0,0.7)',
-        color: '#fff',
-        fontSize: '14px',
-        padding: '6px 12px',
-        borderRadius: '8px',
-        maxWidth: '320px',
-        margin: '0 auto',
-        textAlign: 'center',
-      }}>
-        <div>Camera phase: <b>{phaseRef.current}</b></div>
-        <div>Active player: <b>{activePlayerId || 'none'}</b></div>
-        <div>Token moving: <b>{String(activeTokenIsMoving)}</b></div>
-      </div>
-    </Html>
-  );
+  // Debug overlay removed for production
+  return null;
 }
 
 export function BoardSceneContent({

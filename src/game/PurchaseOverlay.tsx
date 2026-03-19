@@ -40,7 +40,6 @@ export function PurchaseOverlay({
   playerName: string;
   space: BoardSpace | null;
 }) {
-  // Remove animation: just show modal if isVisible and space is set
   if (!isVisible || !space) {
     return null;
   }
@@ -55,55 +54,38 @@ export function PurchaseOverlay({
       />
 
       <View style={styles.content}>
-        <Animated.View
-          style={[
-            styles.previewShell,
-            {
-              opacity: transition,
-              transform: [{ translateY: previewTranslateY }, { scale: previewScale }]
-            }
-          ]}
-        >
-          <View
-            style={[styles.previewCard, { borderColor: renderedSpace.accentColor }]}
+        <View style={styles.previewShell}>
+          <View style={[styles.previewCard, { borderColor: space.accentColor }]}
           >
             <View
               style={[
                 styles.previewGlow,
-                { backgroundColor: renderedSpace.accentColor }
+                { backgroundColor: space.accentColor }
               ]}
             />
             <View style={styles.previewHeader}>
-              <Text style={styles.previewKicker}>Card {renderedSpace.index + 1}</Text>
+              <Text style={styles.previewKicker}>Card {space.index + 1}</Text>
               <Text style={styles.previewStatus}>Available</Text>
             </View>
-            <Text style={styles.previewTitle}>{renderedSpace.label}</Text>
+            <Text style={styles.previewTitle}>{space.label}</Text>
             <Text style={styles.previewBody}>Unowned property ready for a claim.</Text>
             <View style={styles.detailRow}>
               <DetailPill label="Type" value="Property" />
-              <DetailPill label="Rent" value={`${renderedSpace.rent}`} />
+              <DetailPill label="Rent" value={`${space.rent}`} />
               <DetailPill label="Owner" value="None" />
             </View>
           </View>
-        </Animated.View>
+        </View>
 
-        <Animated.View
-          style={[
-            styles.panel,
-            {
-              opacity: transition,
-              transform: [{ translateY: panelTranslateY }, { scale: panelScale }]
-            }
-          ]}
-        >
+        <View style={styles.panel}>
           <Text style={styles.panelKicker}>Purchase Board</Text>
           <Text style={styles.panelTitle}>{playerName}, buy this card?</Text>
           <Text style={styles.panelBody}>
             Buy claims ownership of the landed card. Pass leaves it open. Currency and pricing hooks can plug into this flow later.
           </Text>
           <View style={styles.metaRow}>
-            <DetailPill label="Space" value={`${renderedSpace.index + 1}`} />
-            <DetailPill label="Track" value={renderedSpace.label} />
+            <DetailPill label="Space" value={`${space.index + 1}`} />
+            <DetailPill label="Track" value={space.label} />
           </View>
           <View style={styles.actionRow}>
             <View style={styles.actionCell}>
@@ -122,9 +104,9 @@ export function PurchaseOverlay({
               />
             </View>
           </View>
-        </Animated.View>
+        </View>
       </View>
-    </Animated.View>
+    </View>
   );
 }
 
