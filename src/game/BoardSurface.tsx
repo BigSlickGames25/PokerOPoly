@@ -1057,9 +1057,9 @@ function BoardCard({
 
   return (
     <group position={card.position} rotation={createPoint(0, 0, card.rotationZ)}>
-      {/* Active player ring under card */}
+      {/* Active player ring above card */}
       {isActivePlayerCard && (
-        <mesh position={[0, 0, -card.size[2] / 2 - 0.01]}>
+        <mesh position={[0, 0, card.size[2] / 2 + 0.05]}>
           <ringGeometry args={[card.size[0] * 0.48, card.size[0] * 0.6, 32]} />
           <meshBasicMaterial color={ownerColor || "#fff"} opacity={0.85} transparent />
         </mesh>
@@ -1167,13 +1167,15 @@ export function BoardSurface({
   dealSeed,
   focusedSpaceIndex,
   players,
-  activePlayerTokenSpaceIndex
+  activePlayerTokenSpaceIndex,
+  spaces
 }: {
   activeSeatIndex?: number | null;
   dealSeed?: string;
   focusedSpaceIndex?: number | null;
   players?: BoardPlayerState[];
   activePlayerTokenSpaceIndex?: number | null;
+  spaces: any[];
 }) {
   const boardModel = useMemo(() => buildBoardModel(), [dealSeed]);
   const activeSuit = getActiveSuit(activeSeatIndex);
@@ -1197,7 +1199,7 @@ export function BoardSurface({
             mysteryAssets={boardModel.mysteryAssets}
             players={players}
             activePlayerTokenSpaceIndex={activePlayerTokenSpaceIndex}
-            spaces={players && players.length > 0 ? players[0].spaces : []}
+            spaces={spaces}
           />
         ))}
         {boardModel.suitSockets.map((socket) => (

@@ -929,6 +929,7 @@ export function BoardSceneContent({
           activePlayerTokenSpaceIndex={
             snapshot.players.find((p) => p.id === snapshot.currentTurnPlayerId)?.tokenSpaceIndex ?? null
           }
+          spaces={snapshot.spaces}
         />
         <BoardDiceRoll dice={snapshot.dice} rollKey={diceRollKey} />
 
