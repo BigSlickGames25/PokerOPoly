@@ -19,310 +19,45 @@ import { useDeviceProfile } from "../hooks/useDeviceProfile";
 import { fireHaptic } from "../services/haptics";
 import { useGameSettings } from "../store/game-settings";
 import { clamp, theme } from "../theme";
-import { GameInput, GameWorld } from "./types";
-import { createWorld, resizeWorld, updateWorld } from "./world";
+import { GameState, PokeropolyPlayer } from "./types";
+import { initGame, movePlayer } from "./logic";
+import { Board } from "./Board";
 
-export function GameExperience() {
-  const device = useDeviceProfile();
-  const { settings } = useGameSettings();
-  const isLandscape = device.isLandscape;
-  const [arenaSize, setArenaSize] = useState({ width: 0, height: 0 });
-  const [world, setWorld] = useState<GameWorld | null>(null);
-  const [paused, setPaused] = useState(false);
-  const [bestScore, setBestScore] = useState(0);
-  const [boostActive, setBoostActive] = useState(false);
-  const inputRef = useRef<GameInput>({
-    boost: false,
-    move: { x: 0, y: 0 },
-    pulse: false
-  });
 
-  const joystickSize = Math.round(
-    clamp((isLandscape ? 118 : 152) * device.controlScale, 108, 176)
-  );
-  const pulseSize = Math.round(
-    clamp((isLandscape ? 88 : 108) * device.controlScale, 84, 132)
-  );
+  // Pokeropoly demo state
+  const [state, setState] = useState<GameState>(() => initGame(["Alice", "Bob", "Carol", "Dave"]));
 
-  useEffect(() => {
-    if (settings.keepAwake) {
-      void activateKeepAwakeAsync("game-session");
-    } else {
-      void deactivateKeepAwake("game-session");
-    }
-
-    return () => {
-      void deactivateKeepAwake("game-session");
-    };
-  }, [settings.keepAwake]);
-
-  useEffect(() => {
-    if (Platform.OS !== "web") {
-      return;
-    }
-
-    const { body, documentElement } = document;
-    const previousHtmlOverflow = documentElement.style.overflow;
-    const previousHtmlOverscroll = documentElement.style.overscrollBehavior;
-    const previousBodyOverflow = body.style.overflow;
-    const previousBodyOverscroll = body.style.overscrollBehavior;
-    const previousBodyTouchAction = body.style.touchAction;
-    const previousBodyPosition = body.style.position;
-    const previousBodyInset = body.style.inset;
-    const previousBodyWidth = body.style.width;
-
-    const preventTouchDefault = (event: Event) => {
-      event.preventDefault();
-    };
-
-    documentElement.style.overflow = "hidden";
-    documentElement.style.overscrollBehavior = "none";
-    body.style.overflow = "hidden";
-    body.style.overscrollBehavior = "none";
-    body.style.touchAction = "none";
-    body.style.position = "fixed";
-    body.style.inset = "0";
-    body.style.width = "100%";
-    window.scrollTo(0, 0);
-    document.addEventListener("touchmove", preventTouchDefault, {
-      passive: false
-    });
-
-    return () => {
-      documentElement.style.overflow = previousHtmlOverflow;
-      documentElement.style.overscrollBehavior = previousHtmlOverscroll;
-      body.style.overflow = previousBodyOverflow;
-      body.style.overscrollBehavior = previousBodyOverscroll;
-      body.style.touchAction = previousBodyTouchAction;
-      body.style.position = previousBodyPosition;
-      body.style.inset = previousBodyInset;
-      body.style.width = previousBodyWidth;
-      document.removeEventListener("touchmove", preventTouchDefault);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!arenaSize.width || !arenaSize.height) {
-      return;
-    }
-
-    setWorld((current) =>
-      current ? resizeWorld(current, arenaSize) : createWorld(arenaSize)
-    );
-  }, [arenaSize.height, arenaSize.width]);
-
-  useEffect(() => {
-    if (!world || world.event === "none") {
-      return;
-    }
-
-    if (world.score > bestScore) {
-      setBestScore(world.score);
-    }
-
-    switch (world.event) {
-      case "collect":
-        void fireHaptic(settings.haptics, "collect");
-        break;
-      case "hit":
-      case "game-over":
-        void fireHaptic(settings.haptics, "damage");
-        break;
-      case "pulse":
-        void fireHaptic(settings.haptics, "boost");
-        break;
-    }
-  }, [bestScore, settings.haptics, world?.event, world?.eventNonce, world?.score]);
-
-  useGameLoop(Boolean(world) && !paused && !world?.gameOver, (deltaSeconds) => {
-    setWorld((current) => {
-      if (!current) {
-        return current;
-      }
-
-      return updateWorld(current, inputRef.current, deltaSeconds);
-    });
-
-    if (inputRef.current.pulse) {
-      inputRef.current = {
-        ...inputRef.current,
-        pulse: false
-      };
-    }
-  });
-
-  function handleArenaLayout(event: LayoutChangeEvent) {
-    const { height, width } = event.nativeEvent.layout;
-
-    setArenaSize((current) => {
-      if (current.width === width && current.height === height) {
-        return current;
-      }
-
+  // Demo: move current player on tap
+  function handleBoardPress() {
+    setState((prev) => {
+      const steps = Math.floor(Math.random() * 6) + 1;
+      const idx = prev.currentPlayer;
+      const next = movePlayer(prev, idx, steps);
+      // Advance turn
       return {
-        width,
-        height
+        ...next,
+        currentPlayer: (idx + 1) % prev.players.length,
       };
     });
   }
-
-  function handlePauseToggle() {
-    void fireHaptic(settings.haptics, "pause");
-    setPaused((current) => !current);
-  }
-
-  function handlePulse() {
-    inputRef.current = {
-      ...inputRef.current,
-      pulse: true
-    };
-  }
-
-  function handleRestart() {
-    if (!arenaSize.width || !arenaSize.height) {
-      return;
-    }
-
-    void fireHaptic(settings.haptics, "confirm");
-    setPaused(false);
-    setBoostActive(false);
-    inputRef.current = {
-      boost: false,
-      move: { x: 0, y: 0 },
-      pulse: false
-    };
-    setWorld(createWorld(arenaSize));
-  }
-
-  function leaveGame() {
-    void fireHaptic(settings.haptics, "tap");
-    router.replace("/" as Href);
-  }
-
-  function renderJoystick() {
-    return (
-      <VirtualJoystick
-        label="Movement"
-        onChange={(move) => {
-          inputRef.current = {
-            ...inputRef.current,
-            move
-          };
-        }}
-        onEngage={() => {
-          void fireHaptic(settings.haptics, "tap");
-        }}
-        showGuide={settings.showTouchGuide}
-        size={joystickSize}
-      />
-    );
-  }
-
-  function renderActionButtons() {
-    return (
-      <ActionButtons
-        boostActive={boostActive}
-        handPreference={settings.handPreference}
-        onBoostChange={(value) => {
-          setBoostActive(value);
-          inputRef.current = {
-            ...inputRef.current,
-            boost: value
-          };
-        }}
-        onPulse={handlePulse}
-        showGuide={settings.showTouchGuide}
-        size={pulseSize}
-      />
-    );
-  }
-
-  const leftControl =
-    settings.handPreference === "left" ? renderActionButtons() : renderJoystick();
-  const rightControl =
-    settings.handPreference === "left" ? renderJoystick() : renderActionButtons();
 
   return (
     <View style={styles.root}>
       <AppBackdrop />
-      <SafeAreaView
-        edges={["top", "bottom", "left", "right"]}
-        style={styles.safeArea}
-      >
-        <View style={[styles.gameShell, isLandscape && styles.gameShellLandscape]}>
-          <View style={[styles.header, isLandscape && styles.headerLandscape]}>
-            <View style={styles.metricBlock}>
-              <Text style={styles.metricLabel}>Score</Text>
-              <Text style={styles.metricValue}>{world?.score ?? 0}</Text>
-            </View>
-            <View style={styles.metricBlock}>
-              <Text style={styles.metricLabel}>Best</Text>
-              <Text style={styles.metricValue}>{bestScore}</Text>
-            </View>
-            <View style={styles.metricBlock}>
-              <Text style={styles.metricLabel}>Health</Text>
-              <Text style={styles.metricValue}>{world?.player.health ?? 0}</Text>
-            </View>
-            <Pressable
-              onPress={handlePauseToggle}
-              style={({ pressed }) => [
-                styles.pauseButton,
-                pressed && styles.pauseButtonPressed
-              ]}
-            >
-              <Text style={styles.pauseLabel}>
-                {paused ? "Resume" : "Pause"}
-              </Text>
-            </Pressable>
-          </View>
-
-          {isLandscape ? (
-            <View style={styles.landscapeSession}>
-              <View style={[styles.landscapeRail, styles.landscapeRailLeft]}>
-                {leftControl}
-              </View>
-              <View style={styles.landscapeCenterColumn}>
-                <View
-                  onLayout={handleArenaLayout}
-                  style={[styles.arenaShell, styles.arenaShellLandscape]}
-                >
-                  {world ? <Arena world={world} /> : null}
-
-                  {paused || world?.gameOver ? (
-                    <GameOverlay
-                      onLeave={leaveGame}
-                      onRestart={handleRestart}
-                      paused={paused}
-                      world={world}
-                    />
-                  ) : null}
-                </View>
-              </View>
-              <View style={[styles.landscapeRail, styles.landscapeRailRight]}>
-                {rightControl}
-              </View>
-            </View>
-          ) : (
-            <>
-              <View onLayout={handleArenaLayout} style={styles.arenaShell}>
-                {world ? <Arena world={world} /> : null}
-
-                {paused || world?.gameOver ? (
-                  <GameOverlay
-                    onLeave={leaveGame}
-                    onRestart={handleRestart}
-                    paused={paused}
-                    world={world}
-                  />
-                ) : null}
-              </View>
-
-              <View style={styles.controlsRow}>
-                {leftControl}
-                {rightControl}
-              </View>
-            </>
-          )}
+      <SafeAreaView edges={["top", "bottom", "left", "right"]} style={styles.safeArea}>
+        <Text style={{ textAlign: "center", marginTop: 16, fontSize: 18, fontWeight: "bold" }}>
+          Pokeropoly Board Demo
+        </Text>
+        <Text style={{ textAlign: "center", marginBottom: 8 }}>
+          Tap the board to move the current player
+        </Text>
+        <View style={{ alignItems: "center" }}>
+          <Pressable onPress={handleBoardPress}>
+            <Board state={state} />
+          </Pressable>
+        </View>
+        <View style={{ alignItems: "center", marginTop: 12 }}>
+          <Text>Current Player: {state.players[state.currentPlayer].name}</Text>
         </View>
       </SafeAreaView>
     </View>
