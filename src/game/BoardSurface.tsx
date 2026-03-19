@@ -1064,12 +1064,23 @@ function BoardCard({
           <meshBasicMaterial color={ownerColor || "#fff"} opacity={0.85} transparent />
         </mesh>
       )}
+      {/* Card body uses owner color if owned, otherwise default */}
       <mesh castShadow receiveShadow>
         <boxGeometry args={card.size} />
         <meshStandardMaterial color={ownerColor || "#e2e8f0"} metalness={0.08} roughness={0.32} />
       </mesh>
+      {/* Card face overlay: if owned, tint the face with owner color, else normal */}
       {card.face ? (
-        <StandardCardFacePanel card={card} />
+        <group>
+          {/* Overlay a semi-transparent owner color if owned */}
+          {ownerColor && (
+            <mesh position={[0, 0, card.size[2] / 2 + 0.051]}>
+              <planeGeometry args={[card.size[0] * 0.84, card.size[1] * 0.84]} />
+              <meshBasicMaterial color={ownerColor} opacity={0.82} transparent />
+            </mesh>
+          )}
+          <StandardCardFacePanel card={card} />
+        </group>
       ) : (
         <mesh position={[0, 0, card.size[2] / 2 + 0.04]}>
           <planeGeometry args={[card.size[0] * 0.82, card.size[1] * 0.82]} />
